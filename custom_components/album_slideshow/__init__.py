@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -86,7 +87,7 @@ async def _async_register_card(hass: HomeAssistant) -> None:
     # always pick up the script that matches the running integration
     # rather than a stale copy from a previous release.
     version = await hass.async_add_executor_job(
-        _read_manifest_version, integration_dir
+        _read_card_version, integration_dir
     )
     card_url = f"{CARD_STATIC_PATH}/{CARD_FILE}"
     if version:
@@ -257,6 +258,21 @@ def _read_manifest_version(integration_dir: str) -> str | None:
         return None
 
 
+
+def _read_card_version(integration_dir: str) -> str | None:
+    """Integration version plus a short hash of the card file.
+
+    Browsers cache the card by its URL, so a changed card must get a new
+    ``?v=`` even when the integration version stays the same.
+    """
+    version = _read_manifest_version(integration_dir)
+    try:
+        with open(os.path.join(integration_dir, "www", CARD_FILE), "rb") as fh:
+            digest = hashlib.sha256(fh.read()).hexdigest()[:8]
+    except OSError:
+        return version
+    return f"{version}-{digest}" if version else digest
+
 def _recover_card_from_root(
     integration_dir: str, www_dir: str, card_path: str
 ) -> bool:
@@ -344,7 +360,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
             return
         integration_dir = os.path.dirname(__file__)
         version = await hass.async_add_executor_job(
-            _read_manifest_version, integration_dir
+            _read_card_version, integration_dir
         )
         card_url = f"{CARD_STATIC_PATH}/{CARD_FILE}"
         if version:
