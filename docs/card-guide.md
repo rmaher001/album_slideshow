@@ -77,6 +77,12 @@ keyboard focus. Normal taps keep their configured behavior; a long press only
 reveals controls and never hides a photo by itself. Scrolling cancels a pending
 long press. Exclusion updates can still clear a held photo immediately.
 
+On a paired slide, a long press aims the toolbar at the photo you pressed: that
+photo gets a white outline, the other dims, the toolbar moves onto it with that
+photo's date, and Hide, Archive and Delete act on it alone without asking which.
+Controls shown by mouse hover or the keyboard still cover the whole slide and
+ask which photo.
+
 For YAML, use `photo_controls: off`, `on_demand`, or `always`. Existing
 `photo_controls: true` settings still mean Always, and `false` still means Off.
 Paired slides offer explicit **left/right** or **top/bottom** choices, plus

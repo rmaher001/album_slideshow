@@ -107,6 +107,15 @@ function formatClipLength(seconds) {
   return hours ? `${hours}:${String(minutes).padStart(2, "0")}:${secs}` : `${minutes}:${secs}`;
 }
 
+/** Which photo of a pair (0 or 1) a point on the card falls on, or null when
+ * the slide is a single photo. ``rect`` is the photo area's client rect. */
+function pairHalfAt(rect, x, y, orientation, count) {
+  if (count !== 2 || !rect || !rect.width || !rect.height) return null;
+  if (orientation === "horizontal") return x < rect.left + rect.width / 2 ? 0 : 1;
+  if (orientation === "vertical") return y < rect.top + rect.height / 2 ? 0 : 1;
+  return null;
+}
+
 /** First corner that no caption or toolbar uses, for the video sound button. */
 function soundButtonCorner(captionPositions, toolbarCorner) {
   const taken = new Set([...captionPositions, toolbarCorner]);
@@ -216,6 +225,7 @@ class PhotoControls {
         button:focus-visible { outline: 2px solid var(--primary-color, #03a9f4); outline-offset: 2px; }
         .toolbar { display: grid; grid-template-columns: repeat(auto-fit, minmax(calc(var(--as-control-size) * 3 + 8px), 1fr)); width: calc(var(--as-control-size) * 6 + 36px); max-width: 100%; box-sizing: border-box; gap: 4px 12px; padding: 4px; border-radius: 6px; background: var(--card-background-color, #fff); color: var(--primary-text-color, #222); }
         .control-group { display: flex; gap: 4px; justify-content: center; }
+        .target { grid-column: 1 / -1; padding: 4px 8px 0; font-size: calc(var(--as-control-size) * 0.3); }
         .icon { width: var(--as-control-size); height: var(--as-control-size); padding: calc(var(--as-control-size) * 0.227); flex: 0 0 var(--as-control-size); }
         ha-icon { --mdc-icon-size: calc(var(--as-control-size) / 2); }
         dialog { box-sizing: border-box; width: min(460px, calc(100vw - 32px)); max-width: calc(100vw - 32px); max-height: min(640px, calc(100dvh - 40px)); border: 1px solid var(--divider-color, #ddd); border-radius: 8px; padding: 16px; font-size: 14px; background: var(--card-background-color, #fff); color: var(--primary-text-color, #222); }
@@ -232,6 +242,7 @@ class PhotoControls {
         [hidden] { display: none !important; }
       </style>
       <div class="toolbar">
+        <div class="target" id="target" hidden></div>
         <div class="control-group" role="group" aria-label="Slideshow navigation">
           <button type="button" class="icon" id="previous" title="Previous slide" aria-label="Previous slide"><ha-icon icon="mdi:skip-previous"></ha-icon></button>
           <button type="button" class="icon" id="pause" title="Pause slideshow" aria-label="Pause slideshow"><ha-icon icon="mdi:pause"></ha-icon></button>
@@ -293,6 +304,9 @@ class PhotoControls {
     this._root.getElementById("undo").disabled = this._busy || !state.entryId || !state.canUndo;
     this._root.getElementById("manage").disabled = this._busy || !state.entryId;
     this._root.getElementById("manage").title = `Hidden photos (${state.hiddenCount || 0})`;
+    const target = this._root.getElementById("target");
+    target.textContent = state.targetLabel || "";
+    target.hidden = !state.targetLabel;
     const libraryActions = Array.isArray(state.libraryActions) ? state.libraryActions : [];
     this._root.getElementById("library").hidden = !libraryActions.length;
     for (const action of ["archive", "trash"]) {
@@ -405,8 +419,15 @@ class PhotoControls {
     return content;
   }
 
+  /** The photos an action applies to: the pressed one of a pair, else all. */
+  _actionPhotoIds() {
+    const { photoIds, target } = this._state;
+    return Number.isInteger(target) && photoIds[target] ? [photoIds[target]] : [...photoIds];
+  }
+
   _hide() {
-    const { photoIds, orientation, entryId } = this._state;
+    const { orientation, entryId } = this._state;
+    const photoIds = this._actionPhotoIds();
     if (photoIds.length === 1 && photoIds[0]) {
       this._run("hide_photo", { photo_ids: [...photoIds] }, entryId);
       return;
@@ -427,7 +448,7 @@ class PhotoControls {
   /** Archive or trash a displayed photo in Immich, always after a confirmation. */
   _changeInLibrary(action) {
     const { orientation, entryId } = this._state;
-    const photoIds = [...this._state.photoIds];
+    const photoIds = this._actionPhotoIds();
     const archive = action === "archive";
     const icon = archive ? "mdi:archive-arrow-down" : "mdi:delete";
     const run = (selected) => () => this._run(archive ? "archive_photo" : "trash_photo", { photo_ids: selected }, entryId);
@@ -526,7 +547,8 @@ class PhotoControls {
 }
 
 class PhotoControlsReveal {
-  constructor(card, container, controls, resume) {
+  constructor(card, container, controls, resume, onTarget = () => {}) {
+    this._onTarget = onTarget;
     this._card = card;
     this._container = container;
     this._controls = controls;
@@ -597,6 +619,7 @@ class PhotoControlsReveal {
     const wasHolding = this.holding;
     this._visible = false;
     this._container.hidden = true;
+    this._onTarget(null);
     clearTimeout(this._idleTimer);
     this._idleTimer = null;
     this._cancelPress(false);
@@ -633,6 +656,7 @@ class PhotoControlsReveal {
       this._pressTimer = null;
       if (!this._pointer || this._disposed) return;
       this._suppressClick = true;
+      this._onTarget({ x: this._pointer.x, y: this._pointer.y });
       this.show();
     }, 500);
   }
@@ -1071,6 +1095,9 @@ function createAlbumSlideshowCardClass(Base) {
           max-width: 100%; max-height: 100%; min-width: 0; overflow: hidden;
         }
         .cap-line { font-weight: inherit; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+        .target-ring { position: absolute; box-sizing: border-box; border: 5px solid #fff; pointer-events: none; z-index: 2; }
+        .target-dim { position: absolute; background: rgba(0, 0, 0, .35); pointer-events: none; z-index: 2; }
+        .target-ring[hidden], .target-dim[hidden] { display: none; }
         #photo-controls { position: absolute; right: 8px; max-width: calc(100% - 16px); ${toolbarEdge}: 8px; z-index: 3; }
         .cap-box.cap-shadow {
           text-shadow:
@@ -1101,6 +1128,8 @@ function createAlbumSlideshowCardClass(Base) {
           <img class="layer" id="b" alt="" />
           <video class="video" id="video" muted playsinline loop preload="auto" disablepictureinpicture aria-hidden="true"></video>
           <div class="captions" id="captions" aria-hidden="true"></div>
+          <div class="target-dim" id="target-dim" hidden></div>
+          <div class="target-ring" id="target-ring" hidden></div>
           <div class="placeholder" id="placeholder">Waiting for first frame...</div>
         </div>
         <div id="photo-controls" ${c.photo_controls === "always" ? "" : "hidden"}></div>
@@ -1136,7 +1165,8 @@ function createAlbumSlideshowCardClass(Base) {
       card.setAttribute("role", "group");
       card.setAttribute("aria-label", "Slideshow photo controls");
       if (this.isConnected) {
-        this._controlsReveal = new PhotoControlsReveal(card, container, this._photoControls, () => this._maybeSwap());
+        this._controlsReveal = new PhotoControlsReveal(card, container, this._photoControls, () => this._maybeSwap(),
+          (point) => this._setControlsTarget(point));
       }
     }
   }
@@ -1361,12 +1391,56 @@ function createAlbumSlideshowCardClass(Base) {
     this._refreshPhotoControls(this._hass.states[this._config.entity]?.attributes || {});
   }
 
+  /** A long press on one photo of a pair aims the controls at it: that photo
+   * is outlined, the other dimmed, and the toolbar moves onto it. ``point``
+   * null (hidden, or shown by hover or keyboard) aims them at the slide. */
+  _setControlsTarget(point) {
+    const stage = this.shadowRoot?.getElementById("stage");
+    const target = point && stage
+      ? pairHalfAt(stage.getBoundingClientRect(), point.x, point.y, this._photoOrientation, this._displayedPhotoIds?.length)
+      : null;
+    this._controlsTarget = target;
+    const ring = this.shadowRoot?.getElementById("target-ring");
+    const dim = this.shadowRoot?.getElementById("target-dim");
+    const controls = this.shadowRoot?.getElementById("photo-controls");
+    if (ring && dim && controls) {
+      const vertical = this._photoOrientation === "vertical";
+      const half = (index) => vertical
+        ? `left: 0; width: 100%; top: ${index * 50}%; height: 50%;`
+        : `top: 0; height: 100%; left: ${index * 50}%; width: 50%;`;
+      ring.hidden = target === null;
+      dim.hidden = target === null;
+      if (target !== null) {
+        ring.style.cssText = half(target);
+        dim.style.cssText = half(1 - target);
+      }
+      controls.style.right = !vertical && target === 0 ? "calc(50% + 8px)" : "";
+      controls.style.top = vertical && target === 1 ? "calc(50% + 8px)" : "";
+      controls.style.bottom = vertical && target !== null ? "auto" : "";
+      if (vertical && target === 0) controls.style.top = "8px";
+    }
+    this._refreshPhotoControls(this._hass?.states?.[this._config?.entity]?.attributes || {});
+  }
+
+  _controlsTargetLabel(attrs) {
+    const target = this._controlsTarget;
+    if (!Number.isInteger(target)) return "";
+    const at = attrs.caption_frames?.[target]?.captured_at;
+    const date = at ? new Date(at) : null;
+    const text = date && Number.isFinite(date.getTime())
+      ? date.toLocaleDateString(this._hass?.locale?.language, { month: "short", day: "numeric", year: "numeric" })
+      : "";
+    return text ? `This photo · ${text}` : "This photo";
+  }
+
   _refreshPhotoControls(attrs) {
     this._photoControls?.update({
       entryId: attrs.entry_id,
       photoIds: this._displayedPhotoIds,
       frameId: this._displayedFrameId,
       orientation: this._photoOrientation,
+      target: this._controlsTarget ?? null,
+      targetLabel: this._controlsTargetLabel(attrs),
       hiddenCount: attrs.hidden_photo_count,
       canUndo: attrs.undo_hide_available,
       libraryActions: attrs.library_actions,

@@ -375,7 +375,7 @@ test("missing or disabled pause switch cannot target a different entry", async (
 test("toolbar availability and pause icon follow reported HA state", () => {
   const controls = Object.create(PhotoControls.prototype);
   const elements = new Map();
-  for (const id of ["previous", "next", "pause", "hide", "undo", "manage", "library", "archive", "trash"]) {
+  for (const id of ["previous", "next", "pause", "hide", "undo", "manage", "library", "archive", "trash", "target"]) {
     const icon = { setAttribute(name, value) { this[name] = value; } };
     elements.set(id, {
       setAttribute(name, value) { this[name] = value; },
@@ -396,7 +396,7 @@ test("toolbar availability and pause icon follow reported HA state", () => {
   assert.equal(elements.get("pause").querySelector().icon, "mdi:play");
   controls._busy = true;
   controls.update(state);
-  assert.ok([...elements.entries()].every(([id, element]) => id === "library" || element.disabled));
+  assert.ok([...elements.entries()].every(([id, element]) => id === "library" || id === "target" || element.disabled));
   controls._busy = false;
   controls.update({ entryId: "test", paused: true, canNext: false, canPrevious: false });
   assert.equal(elements.get("next").disabled, true);
@@ -2305,4 +2305,84 @@ test("photo control size follows --album-slideshow-control-size, 44px by default
     assert.doesNotMatch(body, /\b(44|22|140|300)px\b/, `${rule} has a fixed size: ${body}`);
     assert.match(body, /var\(--as-control-size\)/, `${rule} does not follow the control size`);
   }
+});
+
+const pairHalfAt = vm.runInContext("pairHalfAt", context);
+
+test("a press picks the half of a pair it landed on", () => {
+  const rect = { left: 100, top: 50, width: 800, height: 600 };
+  assert.equal(pairHalfAt(rect, 120, 300, "horizontal", 2), 0);
+  assert.equal(pairHalfAt(rect, 880, 300, "horizontal", 2), 1);
+  assert.equal(pairHalfAt(rect, 500, 100, "vertical", 2), 0);
+  assert.equal(pairHalfAt(rect, 500, 600, "vertical", 2), 1);
+  assert.equal(pairHalfAt(rect, 880, 300, "horizontal", 1), null);
+  assert.equal(pairHalfAt(rect, 880, 300, undefined, 2), null);
+});
+
+test("a long press reports where it landed; hover and hiding clear it", () => {
+  const fixture = revealFixture();
+  const points = [];
+  fixture.reveal._onTarget = point => points.push(point);
+  fixture.fire("pointerdown", { clientX: 30, clientY: 40 });
+  fixture.advance(500);
+  assert.equal(JSON.stringify(points), JSON.stringify([{ x: 30, y: 40 }]));
+  fixture.reveal.hide();
+  assert.equal(JSON.stringify(points), JSON.stringify([{ x: 30, y: 40 }, null]));
+  fixture.fire("pointerenter", { pointerType: "mouse" });
+  assert.equal(JSON.stringify(points), JSON.stringify([{ x: 30, y: 40 }, null]));
+});
+
+test("controls on a pressed photo of a pair act on that photo only", () => {
+  const hide = Object.create(PhotoControls.prototype);
+  hide._state = { entryId: "test", photoIds: ["left", "right"], orientation: "horizontal", target: 0 };
+  const calls = [];
+  hide._run = (...args) => calls.push(args);
+  hide._open = () => { throw new Error("no choice expected"); };
+  hide._hide();
+  assert.equal(JSON.stringify(calls), JSON.stringify([["hide_photo", { photo_ids: ["left"] }, "test"]]));
+
+  const { controls, views, calls: libraryCalls } = libraryFixture({ entryId: "test", photoIds: ["left", "right"], orientation: "horizontal", target: 1 });
+  controls._changeInLibrary("trash");
+  assert.equal(views[0].title, "Move this photo to the trash?");
+  views[0].items.find(item => item.label === "Move to trash").action();
+  assert.equal(JSON.stringify(libraryCalls), JSON.stringify([["trash_photo", { photo_ids: ["right"] }, "test"]]));
+});
+
+test("the card hands the pressed photo and its date to the controls", () => {
+  const card = Object.create(Card.prototype);
+  let state;
+  card._photoControls = { update: value => { state = value; } };
+  card._displayedPhotoIds = ["left", "right"];
+  card._photoOrientation = "horizontal";
+  card._controlsTarget = 1;
+  card._refreshPhotoControls({ entry_id: "test", caption_frames: [{ captured_at: "2008-11-27T12:00:00" }, { captured_at: "2015-11-27T12:00:00" }] });
+  assert.equal(state.target, 1);
+  assert.equal(state.targetLabel, "This photo · Nov 27, 2015");
+  card._controlsTarget = null;
+  card._refreshPhotoControls({ entry_id: "test" });
+  assert.equal(state.target, null);
+  assert.equal(state.targetLabel, "");
+});
+
+test("a pressed photo is outlined, the other dimmed, and the toolbar moves onto it", () => {
+  const card = Object.create(Card.prototype);
+  const el = () => ({ hidden: true, style: { cssText: "", right: "", top: "", bottom: "" } });
+  const elements = { "target-ring": el(), "target-dim": el(), "photo-controls": el(),
+    stage: { getBoundingClientRect: () => ({ left: 0, top: 0, width: 1000, height: 600 }) } };
+  Object.defineProperty(card, "shadowRoot", { value: { getElementById: id => elements[id] } });
+  card._photoControls = { update() {} };
+  card._displayedPhotoIds = ["left", "right"];
+  card._photoOrientation = "horizontal";
+  card._setControlsTarget({ x: 100, y: 300 });
+  assert.equal(card._controlsTarget, 0);
+  assert.equal(elements["target-ring"].hidden, false);
+  assert.match(elements["target-ring"].style.cssText, /left: 0%; width: 50%/);
+  assert.match(elements["target-dim"].style.cssText, /left: 50%; width: 50%/);
+  assert.equal(elements["photo-controls"].style.right, "calc(50% + 8px)");
+  card._setControlsTarget({ x: 900, y: 300 });
+  assert.equal(elements["photo-controls"].style.right, "");
+  card._setControlsTarget(null);
+  assert.equal(card._controlsTarget, null);
+  assert.equal(elements["target-ring"].hidden, true);
+  assert.equal(elements["target-dim"].hidden, true);
 });
