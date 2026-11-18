@@ -17,6 +17,8 @@ from homeassistant.helpers import entity_registry as er
 from .const import DOMAIN, SERVICE_NEXT_SLIDE, SERVICE_PREVIOUS_SLIDE, SERVICE_REFRESH_ALBUM, ATTR_ENTRY_ID
 from .const import (
     SERVICE_HIDE_PHOTO,
+    SERVICE_ARCHIVE_PHOTO,
+    SERVICE_TRASH_PHOTO,
     SERVICE_UNDO_HIDE,
     SERVICE_RESTORE_PHOTOS,
     SERVICE_RESTORE_ALL_PHOTOS,
@@ -399,6 +401,19 @@ def _register_photo_services(hass: HomeAssistant) -> None:
         except (ValueError, OSError) as err:
             raise ServiceValidationError(str(err)) from err
 
+    def change_in_library(action):
+        async def handler(call):
+            try:
+                await camera_for(call).async_change_in_library(
+                    action,
+                    photo_ids=call.data.get("photo_ids"),
+                    position=call.data.get("position"),
+                    frame_id=call.data.get("frame_id"),
+                )
+            except (ValueError, OSError) as err:
+                raise ServiceValidationError(str(err)) from err
+        return handler
+
     async def undo_hide(call):
         await camera_for(call).async_restore_photos(undo=True)
 
@@ -432,12 +447,15 @@ def _register_photo_services(hass: HomeAssistant) -> None:
         }
 
     identifiers = vol.All([str], vol.Length(min=1))
+    target = {
+        vol.Optional("photo_ids"): identifiers,
+        vol.Optional("position"): vol.In(["first", "second", "both"]),
+        vol.Optional("frame_id"): vol.All(vol.Coerce(int), vol.Range(min=0)),
+    }
     registrations = (
-        (SERVICE_HIDE_PHOTO, hide_photo, {
-            vol.Optional("photo_ids"): identifiers,
-            vol.Optional("position"): vol.In(["first", "second", "both"]),
-            vol.Optional("frame_id"): vol.All(vol.Coerce(int), vol.Range(min=0)),
-        }),
+        (SERVICE_HIDE_PHOTO, hide_photo, target),
+        (SERVICE_ARCHIVE_PHOTO, change_in_library("archive"), target),
+        (SERVICE_TRASH_PHOTO, change_in_library("trash"), target),
         (SERVICE_UNDO_HIDE, undo_hide, {}),
         (SERVICE_RESTORE_PHOTOS, restore_photos, {vol.Required("photo_ids"): identifiers}),
         (SERVICE_RESTORE_ALL_PHOTOS, restore_all_photos, {}),

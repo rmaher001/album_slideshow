@@ -29,6 +29,68 @@ hide_photo:
           min: 0
           mode: box
 
+archive_photo:
+  name: Archive photo
+  description: Archive the photo in Immich, keeping it in the library but off the timeline. Immich slideshows only. The photo also leaves this slideshow at once. Paired slides require an explicit position or photo IDs.
+  fields:
+    entry_id:
+      name: Entry ID
+      required: true
+      selector:
+        text:
+    photo_ids:
+      name: Photo IDs
+      description: Optional list of IDs from displayed_photo_ids.
+      selector:
+        object:
+    position:
+      name: Position
+      description: First is left or top; second is right or bottom. Omit for a single photo.
+      selector:
+        select:
+          options:
+            - first
+            - second
+            - both
+    frame_id:
+      name: Expected frame ID
+      description: Optional guard that rejects the action if the current frame has changed.
+      selector:
+        number:
+          min: 0
+          mode: box
+
+trash_photo:
+  name: Move photo to trash
+  description: Move the photo to the Immich trash, where it can be restored until Immich empties the trash. Immich slideshows only. The photo also leaves this slideshow at once. Paired slides require an explicit position or photo IDs.
+  fields:
+    entry_id:
+      name: Entry ID
+      required: true
+      selector:
+        text:
+    photo_ids:
+      name: Photo IDs
+      description: Optional list of IDs from displayed_photo_ids.
+      selector:
+        object:
+    position:
+      name: Position
+      description: First is left or top; second is right or bottom. Omit for a single photo.
+      selector:
+        select:
+          options:
+            - first
+            - second
+            - both
+    frame_id:
+      name: Expected frame ID
+      description: Optional guard that rejects the action if the current frame has changed.
+      selector:
+        number:
+          min: 0
+          mode: box
+
 undo_hide:
   name: Undo hide
   description: Restore the photos hidden by the last hide action for this slideshow.

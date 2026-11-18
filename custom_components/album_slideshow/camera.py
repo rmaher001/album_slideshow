@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import async_timeout
-from aiohttp import ClientResponseError
+from aiohttp import ClientError, ClientResponseError
 from PIL import Image
 
 from homeassistant.components.camera import Camera
@@ -38,6 +38,7 @@ from .const import (
     ORDER_ALBUM,
     ORDER_RANDOM,
     PROVIDER_GOOGLE_SHARED,
+    PROVIDER_IMMICH,
 )
 from . import image_processing as ip
 from . import playlist
@@ -585,6 +586,10 @@ class AlbumSlideshowCamera(Camera):
             "hidden_photo_count": len(self.store.hidden_photo_ids),
             "hidden_revision": self.store.hidden_revision,
             "undo_hide_available": bool(self.store.last_hidden_photo_ids),
+            "library_actions": (
+                ["archive", "trash"]
+                if getattr(self.coordinator, "provider", None) == PROVIDER_IMMICH else []
+            ),
             "empty_reason": (
                 None if items else (
                     "all_hidden" if data.get("items") and all(
@@ -818,37 +823,81 @@ class AlbumSlideshowCamera(Camera):
         frame_id: int | None = None,
     ) -> None:
         async with self._navigation_lock:
-            if frame_id is not None and frame_id != self._frame_id:
-                raise ValueError("The displayed slide changed; try again")
-            if photo_ids is not None and position is not None:
-                raise ValueError("Choose photo IDs or a position, not both")
-            if photo_ids is None:
-                current_ids = (
-                    self._current_frame.meta.get("photo_ids", [])
-                    if self._current_frame is not None else []
-                )
-                if not current_ids:
-                    raise ValueError("There is no photo to hide")
-                if len(current_ids) > 1 and position is None:
-                    raise ValueError("This slide is paired; choose first, second, or both")
-                if position == "second" and len(current_ids) < 2:
-                    raise ValueError("This slide has no second photo")
-                if position not in (None, "first", "second", "both"):
-                    raise ValueError("Invalid photo position")
-                photo_ids = (
-                    current_ids if position == "both"
-                    else [current_ids[1 if position == "second" else 0]]
-                )
-            known_ids = {
-                item.photo_id for item in (self.coordinator.data or {}).get("items", [])
-                if item.photo_id
-            }
-            for frame in [self._current_frame, *self._previous_frames, *self._next_frames]:
-                if frame is not None:
-                    known_ids.update(photo_id for photo_id in frame.meta.get("photo_ids", []) if photo_id)
-            if not photo_ids or any(not photo_id or photo_id not in known_ids for photo_id in photo_ids):
-                raise ValueError("Photo identifier unavailable; refresh the album and try again")
+            photo_ids = self._select_photo_ids(photo_ids, position, frame_id, "hide")
             await self._async_change_exclusions(photo_ids, hidden=True)
+
+    async def async_change_in_library(
+        self,
+        action: str,
+        *,
+        photo_ids: list[str] | None = None,
+        position: str | None = None,
+        frame_id: int | None = None,
+    ) -> None:
+        """Archive or trash photos in Immich itself, then drop them from rotation.
+
+        They also join the exclusion list, so the slideshow never shows them
+        again even if a refresh still lists them; Undo hide leaves them there.
+        """
+        async with self._navigation_lock:
+            if getattr(self.coordinator, "provider", None) != PROVIDER_IMMICH:
+                raise ValueError("Archive and delete work only for Immich slideshows")
+            photo_ids = self._select_photo_ids(photo_ids, position, frame_id, action)
+            source_ids = {
+                item.photo_id: item.source_id
+                for item in (self.coordinator.data or {}).get("items", [])
+                if item.photo_id and item.source_id
+            }
+            if any(photo_id not in source_ids for photo_id in photo_ids):
+                raise ValueError("Photo identifier unavailable; refresh the album and try again")
+            try:
+                await self.coordinator.async_change_in_library(
+                    action, [source_ids[photo_id] for photo_id in photo_ids]
+                )
+            except ClientResponseError as err:
+                raise ValueError(f"Immich refused to {action} the photo ({err.status})") from err
+            except (ClientError, asyncio.TimeoutError) as err:
+                raise ValueError(f"Could not reach Immich to {action} the photo") from err
+            await self._async_change_exclusions(photo_ids, hidden=True, remember=False)
+
+    def _select_photo_ids(
+        self,
+        photo_ids: list[str] | None,
+        position: str | None,
+        frame_id: int | None,
+        verb: str,
+    ) -> list[str]:
+        if frame_id is not None and frame_id != self._frame_id:
+            raise ValueError("The displayed slide changed; try again")
+        if photo_ids is not None and position is not None:
+            raise ValueError("Choose photo IDs or a position, not both")
+        if photo_ids is None:
+            current_ids = (
+                self._current_frame.meta.get("photo_ids", [])
+                if self._current_frame is not None else []
+            )
+            if not current_ids:
+                raise ValueError(f"There is no photo to {verb}")
+            if len(current_ids) > 1 and position is None:
+                raise ValueError("This slide is paired; choose first, second, or both")
+            if position == "second" and len(current_ids) < 2:
+                raise ValueError("This slide has no second photo")
+            if position not in (None, "first", "second", "both"):
+                raise ValueError("Invalid photo position")
+            photo_ids = (
+                current_ids if position == "both"
+                else [current_ids[1 if position == "second" else 0]]
+            )
+        known_ids = {
+            item.photo_id for item in (self.coordinator.data or {}).get("items", [])
+            if item.photo_id
+        }
+        for frame in [self._current_frame, *self._previous_frames, *self._next_frames]:
+            if frame is not None:
+                known_ids.update(photo_id for photo_id in frame.meta.get("photo_ids", []) if photo_id)
+        if not photo_ids or any(not photo_id or photo_id not in known_ids for photo_id in photo_ids):
+            raise ValueError("Photo identifier unavailable; refresh the album and try again")
+        return photo_ids
 
     async def async_restore_photos(
         self, photo_ids: list[str] | None = None, *, undo: bool = False
@@ -861,13 +910,13 @@ class AlbumSlideshowCamera(Camera):
             )
             await self._async_change_exclusions(selected, hidden=False)
 
-    async def _async_change_exclusions(self, photo_ids, *, hidden: bool) -> None:
+    async def _async_change_exclusions(self, photo_ids, *, hidden: bool, remember: bool = True) -> None:
         generation = self._timeline_generation
         buffered_frames = (
             () if self._timeline_dirty
             else tuple(frame for frame in (self._current_frame, *self._next_frames) if frame is not None)
         )
-        if await self.store.async_set_photos_hidden(photo_ids, hidden=hidden):
+        if await self.store.async_set_photos_hidden(photo_ids, hidden=hidden, remember=remember):
             if self._timeline_generation != generation + 1:
                 buffered_frames = ()
             await self._rebuild_after_exclusion_change(buffered_frames)

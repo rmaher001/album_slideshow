@@ -231,6 +231,7 @@ The slideshow camera exposes per-frame metadata as attributes (use with `state_a
 | `hidden_photo_count` | int | Number of persisted exclusions, including photos no longer in the source album |
 | `hidden_revision` | int | Persisted exclusion-list revision; changes when exclusions change, allowing cards to discard stale frames |
 | `undo_hide_available` | bool | Whether the last hide action can be undone |
+| `library_actions` | list | `["archive", "trash"]` for Immich slideshows, otherwise empty; the card shows Archive and Delete only when present |
 | `empty_reason` | string \| null | `all_hidden` or `no_matching_photos` when the playlist is empty |
 | `navigation_buffer_size` | int | Configured number of fully rendered slides retained in each direction |
 | `previous_frames_cached` | int | Previous rendered frames currently available for immediate navigation |
@@ -251,7 +252,9 @@ entity ID.
 | `album_slideshow.next_slide` | Optional `frame_id` of the slide on screen; advances from it (default: from the camera's current frame), including while paused |
 | `album_slideshow.refresh_album` | None; re-fetches the source album |
 | `album_slideshow.hide_photo` | Optional `photo_ids` list from `displayed_photo_ids`, or `position`: `first`, `second`, `both`. Optional `frame_id` rejects a stale current-frame action. |
-| `album_slideshow.undo_hide` | None |
+| `album_slideshow.archive_photo` | Immich only. Same fields as `hide_photo`; archives the photo in Immich and drops it from the slideshow. Needs an API key with `asset.update`. |
+| `album_slideshow.trash_photo` | Immich only. Same fields as `hide_photo`; moves the photo to the Immich trash (never a permanent delete) and drops it from the slideshow. Needs an API key with `asset.delete`. |
+| `album_slideshow.undo_hide` | None; never brings back an archived or trashed photo |
 | `album_slideshow.restore_photos` | `photo_ids` list |
 | `album_slideshow.restore_all_photos` | None; makes all excluded photos eligible again |
 | `album_slideshow.list_hidden_photos` | Optional `offset` (default 0) and `limit` (default 50, range 1-100); returns `photos`, `total`, and `offset` as response data |

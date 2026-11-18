@@ -564,7 +564,7 @@ def test_photo_services_target_entry_and_paginate_without_exposing_urls():
     hass = SimpleNamespace(data={"album_slideshow": {"test": {"camera": cam}}}, services=Services())
     _register_photo_services(hass)
     _register_photo_services(hass)
-    assert len(handlers) == 5
+    assert len(handlers) == 7
 
     async def call(name, **data):
         handler, options = handlers[name]

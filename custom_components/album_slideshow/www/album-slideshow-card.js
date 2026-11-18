@@ -242,6 +242,10 @@ class PhotoControls {
           <button type="button" class="icon" id="undo" title="Undo hide" aria-label="Undo hide"><ha-icon icon="mdi:undo"></ha-icon></button>
           <button type="button" class="icon" id="manage" title="Hidden photos" aria-label="Hidden photos"><ha-icon icon="mdi:image-off-outline"></ha-icon></button>
         </div>
+        <div class="control-group" role="group" aria-label="Photo library" id="library" hidden>
+          <button type="button" class="icon" id="archive" title="Archive photo" aria-label="Archive photo"><ha-icon icon="mdi:archive-arrow-down"></ha-icon></button>
+          <button type="button" class="icon" id="trash" title="Move photo to trash" aria-label="Move photo to trash"><ha-icon icon="mdi:delete"></ha-icon></button>
+        </div>
       </div>
       <div id="error" class="error" role="alert" hidden></div>
       <dialog aria-labelledby="title">
@@ -259,6 +263,8 @@ class PhotoControls {
     this._root.getElementById("hide").addEventListener("click", () => this._hide());
     this._root.getElementById("undo").addEventListener("click", () => this._run("undo_hide"));
     this._root.getElementById("manage").addEventListener("click", () => this._showHidden(0));
+    this._root.getElementById("archive").addEventListener("click", () => this._changeInLibrary("archive"));
+    this._root.getElementById("trash").addEventListener("click", () => this._changeInLibrary("trash"));
     this._root.getElementById("close").addEventListener("click", () => this._dialog.close());
   }
 
@@ -287,6 +293,11 @@ class PhotoControls {
     this._root.getElementById("undo").disabled = this._busy || !state.entryId || !state.canUndo;
     this._root.getElementById("manage").disabled = this._busy || !state.entryId;
     this._root.getElementById("manage").title = `Hidden photos (${state.hiddenCount || 0})`;
+    const libraryActions = Array.isArray(state.libraryActions) ? state.libraryActions : [];
+    this._root.getElementById("library").hidden = !libraryActions.length;
+    for (const action of ["archive", "trash"]) {
+      this._root.getElementById(action).disabled = this._busy || !state.entryId || !libraryActions.includes(action) || !this._state.photoIds.some(Boolean);
+    }
   }
 
   async _call(service, data = {}, entryId = this._state.entryId) {
@@ -411,6 +422,47 @@ class PhotoControls {
     const both = this._button("Hide both photos", "mdi:eye-off", () => this._run("hide_photo", { photo_ids: [...photoIds] }, entryId));
     both.disabled = photoIds.length !== 2 || photoIds.some((photoId) => !photoId);
     content.appendChild(both);
+  }
+
+  /** Archive or trash a displayed photo in Immich, always after a confirmation. */
+  _changeInLibrary(action) {
+    const { orientation, entryId } = this._state;
+    const photoIds = [...this._state.photoIds];
+    const archive = action === "archive";
+    const icon = archive ? "mdi:archive-arrow-down" : "mdi:delete";
+    const run = (selected) => () => this._run(archive ? "archive_photo" : "trash_photo", { photo_ids: selected }, entryId);
+    const single = photoIds.length === 1;
+    const content = this._open(
+      archive ? (single ? "Archive this photo?" : "Archive which photo?")
+        : (single ? "Move this photo to the trash?" : "Move which photo to the trash?"),
+    );
+    content.className = "choices";
+    content.appendChild(this._note(
+      archive ? "It stays in Immich, off the timeline." : "Immich keeps it in the trash, where you can restore it.",
+    ));
+    if (single) {
+      const confirm = this._button(archive ? "Archive" : "Move to trash", icon, run(photoIds));
+      confirm.disabled = !photoIds[0];
+      content.appendChild(confirm);
+    } else {
+      const sides = orientation === "vertical" ? ["top", "bottom"] : ["left", "right"];
+      photoIds.forEach((photoId, index) => {
+        const label = archive ? `Archive ${sides[index]} photo` : `Move ${sides[index]} photo to trash`;
+        const button = this._button(label, icon, run([photoId]));
+        button.disabled = !photoId;
+        content.appendChild(button);
+      });
+      const both = this._button(archive ? "Archive both photos" : "Move both photos to trash", icon, run(photoIds));
+      both.disabled = photoIds.length !== 2 || photoIds.some((photoId) => !photoId);
+      content.appendChild(both);
+    }
+    content.appendChild(this._button("Cancel", "mdi:close", () => this.close()));
+  }
+
+  _note(text) {
+    const note = document.createElement("small");
+    note.textContent = text;
+    return note;
   }
 
   async _showHidden(offset) {
@@ -1317,6 +1369,7 @@ function createAlbumSlideshowCardClass(Base) {
       orientation: this._photoOrientation,
       hiddenCount: attrs.hidden_photo_count,
       canUndo: attrs.undo_hide_available,
+      libraryActions: attrs.library_actions,
       canPrevious: attrs.previous_frames_cached > 0,
       canNext: attrs.media_count > 0,
       paused: attrs.paused,
@@ -3143,6 +3196,7 @@ function createAlbumSlideshowCardEditorClass(Base) {
       orientation: attrs.pair_orientation,
       hiddenCount: attrs.hidden_photo_count,
       canUndo: attrs.undo_hide_available,
+      libraryActions: attrs.library_actions,
       canPrevious: attrs.previous_frames_cached > 0,
       canNext: attrs.media_count > 0,
       paused: attrs.paused,

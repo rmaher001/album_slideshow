@@ -1,6 +1,8 @@
 DOMAIN = "album_slideshow"
 
 SERVICE_HIDE_PHOTO = "hide_photo"
+SERVICE_ARCHIVE_PHOTO = "archive_photo"
+SERVICE_TRASH_PHOTO = "trash_photo"
 SERVICE_UNDO_HIDE = "undo_hide"
 SERVICE_RESTORE_PHOTOS = "restore_photos"
 SERVICE_RESTORE_ALL_PHOTOS = "restore_all_photos"

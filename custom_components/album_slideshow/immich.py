@@ -596,6 +596,23 @@ class ImmichClient:
                 resp.raise_for_status()
                 return await resp.json()
 
+    async def _send(self, method: str, path: str, body: dict[str, Any]) -> None:
+        """Send a write that answers with no body (``204``)."""
+        session = async_get_clientsession(self.hass)
+        async with async_timeout.timeout(_TIMEOUT):
+            async with session.request(
+                method, self.base_url + path, headers=self.headers, json=body
+            ) as resp:
+                resp.raise_for_status()
+
+    async def async_archive_assets(self, asset_ids: list[str]) -> None:
+        """Archive assets: kept in the library, off the timeline."""
+        await self._send("PUT", "/api/assets", {"ids": asset_ids, "visibility": "archive"})
+
+    async def async_trash_assets(self, asset_ids: list[str]) -> None:
+        """Move assets to the trash, where they can be restored."""
+        await self._send("DELETE", "/api/assets", {"ids": asset_ids, "force": False})
+
     async def async_validate(self) -> str | None:
         """Return the server version if the URL + key work, else raise."""
         data = await self._get("/api/server/about")

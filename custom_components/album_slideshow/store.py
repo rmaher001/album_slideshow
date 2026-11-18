@@ -167,8 +167,9 @@ class SlideshowStore:
         )
 
     async def async_set_photos_hidden(
-        self, photo_ids: Iterable[str], *, hidden: bool
+        self, photo_ids: Iterable[str], *, hidden: bool, remember: bool = True
     ) -> bool:
+        """Change the exclusion list; ``remember=False`` keeps Undo hide as it was."""
         requested = frozenset(photo_ids)
         if any(not isinstance(photo_id, str) or not photo_id for photo_id in requested):
             raise ValueError("Invalid photo identifier")
@@ -184,7 +185,8 @@ class SlideshowStore:
                 return False
             last_hidden = (
                 tuple(sorted(updated - self.hidden_photo_ids))
-                if hidden
+                if hidden and remember
+                else self.last_hidden_photo_ids if hidden
                 else tuple(photo_id for photo_id in self.last_hidden_photo_ids if photo_id in updated)
             )
             await self._hidden_storage.async_save(

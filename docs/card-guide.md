@@ -59,6 +59,14 @@ the slideshow's existing pause switch, so it affects all cards using that camera
 the icon follows the actual Home Assistant state. **Refresh album** stays in the
 editor's Actions section.
 
+On an Immich slideshow the toolbar also has **Archive** and **Delete**. These
+change the photo in Immich itself: Archive keeps it in the library but off the
+timeline, and Delete moves it to the Immich trash, where it can be restored.
+Both ask for confirmation first (a paired slide asks which photo), then drop the
+photo from the slideshow. The Immich API key needs `asset.update` for Archive
+and `asset.delete` for Delete; without them the toolbar shows Immich's refusal
+and the photo stays.
+
 With **On demand**, the displayed photo stays steady while choosing an action.
 This holds only that card's display; other cards continue normally unless you
 use **Pause/Resume** to pause the slideshow itself.

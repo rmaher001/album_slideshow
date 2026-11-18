@@ -2811,6 +2811,22 @@ class AlbumCoordinator(DataUpdateCoordinator):
                 return candidate, {}
         return None, {}
 
+    async def async_change_in_library(self, action: str, source_ids: list[str]) -> None:
+        """Archive or trash Immich assets with this slideshow's own key."""
+        from . import immich as immich_api
+
+        client = immich_api.ImmichClient(
+            self.hass,
+            self.entry.data.get(CONF_IMMICH_URL),
+            self.entry.data.get(CONF_IMMICH_API_KEY),
+        )
+        if action == "archive":
+            await client.async_archive_assets(source_ids)
+        elif action == "trash":
+            await client.async_trash_assets(source_ids)
+        else:
+            raise ValueError(f"Unknown library action {action!r}")
+
     async def async_video_info(self, item: MediaItem) -> dict[str, Any]:
         """Describe the stream a video slide is served as; cached per item.
 

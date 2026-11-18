@@ -375,7 +375,7 @@ test("missing or disabled pause switch cannot target a different entry", async (
 test("toolbar availability and pause icon follow reported HA state", () => {
   const controls = Object.create(PhotoControls.prototype);
   const elements = new Map();
-  for (const id of ["previous", "next", "pause", "hide", "undo", "manage"]) {
+  for (const id of ["previous", "next", "pause", "hide", "undo", "manage", "library", "archive", "trash"]) {
     const icon = { setAttribute(name, value) { this[name] = value; } };
     elements.set(id, {
       setAttribute(name, value) { this[name] = value; },
@@ -396,7 +396,7 @@ test("toolbar availability and pause icon follow reported HA state", () => {
   assert.equal(elements.get("pause").querySelector().icon, "mdi:play");
   controls._busy = true;
   controls.update(state);
-  assert.ok([...elements.values()].every(element => element.disabled));
+  assert.ok([...elements.entries()].every(([id, element]) => id === "library" || element.disabled));
   controls._busy = false;
   controls.update({ entryId: "test", paused: true, canNext: false, canPrevious: false });
   assert.equal(elements.get("next").disabled, true);
@@ -2217,4 +2217,79 @@ test("a card that still can't register after a minute logs one warning", () => {
   } finally {
     fixture.restore();
   }
+});
+
+function libraryFixture(state) {
+  const controls = Object.create(PhotoControls.prototype);
+  controls._state = state;
+  const views = [];
+  const calls = [];
+  controls._open = title => {
+    const view = { title, items: [], text: [], append(...nodes) { this.items.push(...nodes); }, appendChild(node) { this.items.push(node); } };
+    views.push(view);
+    return view;
+  };
+  controls._note = text => ({ text });
+  controls._button = (label, icon, action) => ({ label, icon, action });
+  controls._run = (...args) => calls.push(args);
+  controls.close = () => calls.push(["closed"]);
+  return { controls, views, calls };
+}
+
+test("delete asks first and moves the captured photo to the trash", () => {
+  const { controls, views, calls } = libraryFixture({ entryId: "test", photoIds: ["photo"], libraryActions: ["archive", "trash"] });
+  controls._changeInLibrary("trash");
+  assert.equal(calls.length, 0);
+  assert.equal(views[0].title, "Move this photo to the trash?");
+  assert.match(views[0].items[0].text, /restore/);
+  controls._state = { entryId: "other", photoIds: ["next-photo"] };
+  const confirm = views[0].items.find(item => item.label === "Move to trash");
+  confirm.action();
+  assert.equal(JSON.stringify(calls), JSON.stringify([["trash_photo", { photo_ids: ["photo"] }, "test"]]));
+});
+
+test("archive asks first and cancel changes nothing", () => {
+  const { controls, views, calls } = libraryFixture({ entryId: "test", photoIds: ["photo"], libraryActions: ["archive", "trash"] });
+  controls._changeInLibrary("archive");
+  assert.equal(views[0].title, "Archive this photo?");
+  views[0].items.find(item => item.label === "Cancel").action();
+  assert.equal(JSON.stringify(calls), JSON.stringify([["closed"]]));
+  views[0].items.find(item => item.label === "Archive").action();
+  assert.equal(JSON.stringify(calls[1]), JSON.stringify(["archive_photo", { photo_ids: ["photo"] }, "test"]));
+});
+
+test("paired archive and delete name each side", () => {
+  const { controls, views, calls } = libraryFixture({ entryId: "test", photoIds: ["top", "bottom"], orientation: "vertical" });
+  controls._changeInLibrary("trash");
+  const labels = views[0].items.map(item => item.label).filter(Boolean);
+  assert.deepEqual(labels, ["Move top photo to trash", "Move bottom photo to trash", "Move both photos to trash", "Cancel"]);
+  views[0].items.find(item => item.label === "Move bottom photo to trash").action();
+  views[0].items.find(item => item.label === "Move both photos to trash").action();
+  assert.equal(JSON.stringify(calls), JSON.stringify([
+    ["trash_photo", { photo_ids: ["bottom"] }, "test"],
+    ["trash_photo", { photo_ids: ["top", "bottom"] }, "test"],
+  ]));
+});
+
+test("library buttons appear only when the slideshow offers them", () => {
+  const elements = new Map();
+  const element = () => ({ disabled: false, hidden: false, title: "", setAttribute() {}, querySelector: () => ({ setAttribute() {} }) });
+  const controls = Object.create(PhotoControls.prototype);
+  controls._state = {};
+  controls._root = { getElementById: id => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); } };
+  controls.update({ entryId: "test", photoIds: ["photo"], libraryActions: [] });
+  assert.equal(elements.get("library").hidden, true);
+  controls.update({ entryId: "test", photoIds: ["photo"], libraryActions: ["archive", "trash"] });
+  assert.equal(elements.get("library").hidden, false);
+  assert.equal(elements.get("archive").disabled, false);
+  assert.equal(elements.get("trash").disabled, false);
+  controls.update({ entryId: "test", photoIds: [], libraryActions: ["archive", "trash"] });
+  assert.equal(elements.get("trash").disabled, true);
+
+  const card = Object.create(Card.prototype);
+  let state;
+  card._photoControls = { update: value => { state = value; } };
+  card._displayedPhotoIds = ["photo"];
+  card._refreshPhotoControls({ entry_id: "test", library_actions: ["archive", "trash"] });
+  assert.deepEqual([...state.libraryActions], ["archive", "trash"]);
 });
