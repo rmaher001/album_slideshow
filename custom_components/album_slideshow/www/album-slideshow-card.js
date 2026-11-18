@@ -208,16 +208,16 @@ class PhotoControls {
     this._root = container.attachShadow({ mode: "open" });
     this._root.innerHTML = `
       <style>
-        :host { display: block; max-width: 100%; font-family: var(--paper-font-body1_-_font-family, sans-serif); }
+        :host { display: block; max-width: 100%; font-family: var(--paper-font-body1_-_font-family, sans-serif); --as-control-size: var(--album-slideshow-control-size, 44px); }
         :host([hidden]) { display: none !important; }
-        button { font: inherit; color: inherit; cursor: pointer; border: 0; border-radius: 6px; background: var(--secondary-background-color, #eee); padding: 8px 12px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; }
+        button { font: inherit; color: inherit; cursor: pointer; border: 0; border-radius: 6px; background: var(--secondary-background-color, #eee); padding: 8px 12px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: var(--as-control-size); }
         button:hover { filter: brightness(.94); }
         button:disabled { opacity: .4; cursor: default; }
         button:focus-visible { outline: 2px solid var(--primary-color, #03a9f4); outline-offset: 2px; }
-        .toolbar { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); width: 300px; max-width: 100%; box-sizing: border-box; gap: 4px 12px; padding: 4px; border-radius: 6px; background: var(--card-background-color, #fff); color: var(--primary-text-color, #222); }
+        .toolbar { display: grid; grid-template-columns: repeat(auto-fit, minmax(calc(var(--as-control-size) * 3 + 8px), 1fr)); width: calc(var(--as-control-size) * 6 + 36px); max-width: 100%; box-sizing: border-box; gap: 4px 12px; padding: 4px; border-radius: 6px; background: var(--card-background-color, #fff); color: var(--primary-text-color, #222); }
         .control-group { display: flex; gap: 4px; justify-content: center; }
-        .icon { width: 44px; height: 44px; padding: 10px; flex: 0 0 44px; }
-        ha-icon { --mdc-icon-size: 22px; }
+        .icon { width: var(--as-control-size); height: var(--as-control-size); padding: calc(var(--as-control-size) * 0.227); flex: 0 0 var(--as-control-size); }
+        ha-icon { --mdc-icon-size: calc(var(--as-control-size) / 2); }
         dialog { box-sizing: border-box; width: min(460px, calc(100vw - 32px)); max-width: calc(100vw - 32px); max-height: min(640px, calc(100dvh - 40px)); border: 1px solid var(--divider-color, #ddd); border-radius: 8px; padding: 16px; font-size: 14px; background: var(--card-background-color, #fff); color: var(--primary-text-color, #222); }
         dialog::backdrop { background: rgba(0, 0, 0, .45); }
         header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

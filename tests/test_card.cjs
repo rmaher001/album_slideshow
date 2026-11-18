@@ -2293,3 +2293,16 @@ test("library buttons appear only when the slideshow offers them", () => {
   card._refreshPhotoControls({ entry_id: "test", library_actions: ["archive", "trash"] });
   assert.deepEqual([...state.libraryActions], ["archive", "trash"]);
 });
+
+test("photo control size follows --album-slideshow-control-size, 44px by default", () => {
+  const start = source.indexOf("class PhotoControls");
+  const style = source.slice(source.indexOf("<style>", start), source.indexOf("</style>", start));
+  assert.match(style, /--as-control-size:\s*var\(--album-slideshow-control-size,\s*44px\)/);
+  // Every toolbar dimension scales with the one size, so a frame can enlarge
+  // the whole control box for touch without the buttons spilling out of it.
+  for (const rule of ["button", ".toolbar", ".icon", "ha-icon"]) {
+    const body = style.match(new RegExp(`\\n\\s*${rule.replace(".", "\\.")} \\{([^}]*)\\}`))[1];
+    assert.doesNotMatch(body, /\b(44|22|140|300)px\b/, `${rule} has a fixed size: ${body}`);
+    assert.match(body, /var\(--as-control-size\)/, `${rule} does not follow the control size`);
+  }
+});

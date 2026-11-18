@@ -82,6 +82,11 @@ For YAML, use `photo_controls: off`, `on_demand`, or `always`. Existing
 Paired slides offer explicit **left/right** or **top/bottom** choices, plus
 **Hide both photos**.
 
+The toolbar's buttons are 44px. On a wall display or other touch screen where
+that is too small, set the CSS variable `--album-slideshow-control-size` on the
+card or any element around it (for example `80px`); the buttons, icons and the
+toolbar box all scale with it.
+
 ### Undo and Restore
 
 **Undo hide** restores the last hide action, including both photos if they were
