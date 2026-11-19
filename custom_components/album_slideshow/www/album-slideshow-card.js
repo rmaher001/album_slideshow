@@ -316,14 +316,25 @@ class PhotoControls {
 
   async _call(service, data = {}, entryId = this._state.entryId) {
     if (!entryId) throw new Error("This slideshow does not support these controls");
-    const result = await this._getHass().callWS({
+    const request = this._getHass().callWS({
       type: "call_service",
       domain: "album_slideshow",
       service,
       service_data: { ...data, entry_id: entryId },
       ...(service === "list_hidden_photos" ? { return_response: true } : {}),
     });
-    return result?.response;
+    // An answer that never comes would leave the controls busy for good;
+    // the integration gives Immich 30 s, so 40 s means it is lost.
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error("Home Assistant did not answer; try again")), 40000);
+    });
+    try {
+      const result = await Promise.race([request, timeout]);
+      return result?.response;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async _navigate(service) {
@@ -583,6 +594,13 @@ class PhotoControlsReveal {
       if (this._suppressClick || (this._pointer && this._pointer.type !== "mouse")) {
         event.preventDefault();
         event.stopPropagation();
+        // A touch screen can report the long press here before the press
+        // timer fires, then cancel the pointer; aim at the pressed photo too.
+        if (!this._suppressClick) {
+          clearTimeout(this._pressTimer);
+          this._pressTimer = null;
+          this._onTarget({ x: event.clientX, y: event.clientY });
+        }
         this._suppressClick = true;
         this.show();
       }

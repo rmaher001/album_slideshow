@@ -2386,3 +2386,31 @@ test("a pressed photo is outlined, the other dimmed, and the toolbar moves onto 
   assert.equal(elements["target-ring"].hidden, true);
   assert.equal(elements["target-dim"].hidden, true);
 });
+
+test("a touch long press that arrives as contextmenu still aims at the pressed photo", () => {
+  const fixture = revealFixture();
+  const points = [];
+  fixture.reveal._onTarget = point => points.push(point);
+  fixture.fire("pointerdown", { clientX: 900, clientY: 300 });
+  fixture.advance(450);
+  const menu = fixture.fire("contextmenu", { clientX: 901, clientY: 302 });
+  fixture.fire("pointercancel");
+  fixture.advance(1000);
+  assert.equal(menu.defaultPrevented, true);
+  assert.equal(fixture.container.hidden, false);
+  assert.equal(JSON.stringify(points), JSON.stringify([{ x: 901, y: 302 }]));
+});
+
+test("a request Home Assistant never answers fails after 40 seconds instead of hanging", async () => {
+  const timers = [];
+  context.setTimeout = (callback, delay) => { timers.push({ callback, delay }); return timers.length; };
+  context.clearTimeout = () => {};
+  const controls = Object.create(PhotoControls.prototype);
+  controls._state = { entryId: "test" };
+  controls._getHass = () => ({ callWS: () => new Promise(() => {}) });
+  const pending = controls._call("archive_photo", { photo_ids: ["photo"] });
+  const timer = timers.find(entry => entry.delay === 40000);
+  assert.ok(timer, "no 40 s limit on the request");
+  timer.callback();
+  await assert.rejects(pending, /did not answer/);
+});
