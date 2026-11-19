@@ -190,6 +190,58 @@ test("open dialogs and active actions prevent automatic dismissal", () => {
   fixture.reveal.dispose();
 });
 
+test("the idle check keeps retrying after a dialog or action held the controls", () => {
+  const fixture = revealFixture();
+  fixture.reveal.show();
+  fixture.controls.active = true;
+  fixture.advance(5000);
+  assert.equal(fixture.container.hidden, false);
+  // The action finishes without any further pointer or key event.
+  fixture.controls.active = false;
+  fixture.advance(5000);
+  assert.equal(fixture.container.hidden, true);
+  assert.equal(fixture.reveal.holding, false);
+  assert.equal(fixture.resumes, 1);
+  fixture.reveal.dispose();
+});
+
+test("a stuck focus, pointer or dialog releases the photo a minute after the last activity", () => {
+  for (const cause of ["focus", "pointer", "dialog"]) {
+    const fixture = revealFixture();
+    if (cause === "pointer") {
+      // A long press whose pointerup the browser never delivered.
+      fixture.fire("pointerdown");
+      fixture.advance(500);
+    } else {
+      fixture.reveal.show();
+      if (cause === "focus") fixture.container.keyboardFocused = true;
+      else fixture.controls.active = true;
+    }
+    fixture.advance(59000);
+    assert.equal(fixture.reveal.holding, true, cause);
+    fixture.advance(1500);
+    assert.equal(fixture.reveal.holding, false, cause);
+    assert.equal(fixture.container.hidden, true, cause);
+    assert.equal(fixture.controls.active, false, cause);
+    assert.equal(fixture.resumes, 1, cause);
+    fixture.reveal.dispose();
+  }
+});
+
+test("a running photo action is never cut off by the stuck-hold release", () => {
+  const fixture = revealFixture();
+  fixture.reveal.show();
+  fixture.controls.active = true;
+  fixture.controls.busy = true;
+  fixture.advance(90000);
+  assert.equal(fixture.container.hidden, false);
+  fixture.controls.busy = false;
+  fixture.controls.active = false;
+  fixture.advance(5000);
+  assert.equal(fixture.container.hidden, true);
+  fixture.reveal.dispose();
+});
+
 test("keyboard focus reveals controls and Escape dismisses them", () => {
   const fixture = revealFixture();
   fixture.card.keyboardFocused = true;

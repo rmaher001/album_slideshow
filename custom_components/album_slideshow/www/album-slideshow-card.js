@@ -283,6 +283,10 @@ class PhotoControls {
     return this._busy || this._dialog.open;
   }
 
+  get busy() {
+    return this._busy;
+  }
+
   close() {
     this._dialog.close();
   }
@@ -646,12 +650,39 @@ class PhotoControlsReveal {
 
   activity() {
     if (this._disposed || !this._visible) return;
+    this._idleChecks = 0;
+    this._armIdle();
+  }
+
+  // Visible controls hold the photo, so the idle check never gives up: while
+  // a dialog, an action, a pressed pointer or keyboard focus keeps them up it
+  // checks again, and a minute after the last activity it releases them even
+  // if a browser never delivered the pointerup or left focus behind. Only a
+  // photo action still waiting on Home Assistant (40 s at most) keeps them.
+  _armIdle() {
     clearTimeout(this._idleTimer);
     this._idleTimer = setTimeout(() => {
       this._idleTimer = null;
-      if (this._controls.active || this._pointer || this._keyboardFocused()) return;
-      this.hide();
+      if (this._disposed || !this._visible) return;
+      this._idleChecks += 1;
+      if (this._controls.busy) {
+        this._armIdle();
+      } else if (this._idleChecks >= 12) {
+        this._release();
+      } else if (this._controls.active || this._pointer || this._keyboardFocused()) {
+        this._armIdle();
+      } else {
+        this.hide();
+      }
     }, 5000);
+  }
+
+  _release() {
+    this._controls.close();
+    this._cancelPress(false);
+    this._container.shadowRoot?.activeElement?.blur?.();
+    if (this._card.matches(":focus-within")) this._card.ownerDocument?.activeElement?.blur?.();
+    this.hide();
   }
 
   _keyboardFocused() {
