@@ -10,10 +10,11 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
-from homeassistant.core import HomeAssistant, SupportsResponse
+from homeassistant.core import HomeAssistant, SupportsResponse, callback
 from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 
+from .const import WS_PHOTO_ACTION_TIMING
 from .const import DOMAIN, SERVICE_NEXT_SLIDE, SERVICE_PREVIOUS_SLIDE, SERVICE_REFRESH_ALBUM, ATTR_ENTRY_ID
 from .const import (
     SERVICE_HIDE_PHOTO,
@@ -356,6 +357,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     hass.data.setdefault(DOMAIN, {})
     await _async_register_card(hass)
     async_register_viewer_websocket(hass)
+    async_register_action_timing_websocket(hass)
 
     async def _retry_lovelace_resource(_event) -> None:
         if hass.data.get(DOMAIN, {}).get("lovelace_resource_registered"):
@@ -381,6 +383,42 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         EVENT_HOMEASSISTANT_STARTED, _retry_lovelace_resource
     )
     return True
+
+
+@callback
+def async_register_action_timing_websocket(hass: HomeAssistant) -> None:
+    """Register the command a card uses to report how long a photo action took."""
+    # Imported lazily so the module still loads in test environments that
+    # stub out homeassistant.
+    from homeassistant.components import websocket_api
+
+    duration = vol.Any(None, vol.All(int, vol.Range(min=0)))
+
+    @websocket_api.websocket_command({
+        vol.Required("type"): WS_PHOTO_ACTION_TIMING,
+        vol.Required("entry_id"): str,
+        vol.Required("action"): vol.In(["archive", "trash"]),
+        vol.Optional("answer_ms"): duration,
+        vol.Optional("photo_ms"): duration,
+        vol.Optional("load_ms"): duration,
+        vol.Optional("client"): vol.Any(None, vol.All(str, vol.Length(max=200))),
+    })
+    @callback
+    def ws_photo_action_timing(hass: HomeAssistant, connection, msg) -> None:
+        camera = hass.data.get(DOMAIN, {}).get(msg["entry_id"], {}).get("camera")
+        if camera is None:
+            connection.send_error(msg["id"], websocket_api.ERR_NOT_FOUND, "Unknown slideshow")
+            return
+        camera.async_record_action_timing(
+            msg["action"],
+            answer_ms=msg.get("answer_ms"),
+            photo_ms=msg.get("photo_ms"),
+            load_ms=msg.get("load_ms"),
+            client=msg.get("client"),
+        )
+        connection.send_result(msg["id"])
+
+    websocket_api.async_register_command(hass, ws_photo_action_timing)
 
 
 def _register_photo_services(hass: HomeAssistant) -> None:

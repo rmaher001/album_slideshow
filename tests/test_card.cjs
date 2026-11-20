@@ -2310,6 +2310,98 @@ test("archive asks first and cancel changes nothing", () => {
   assert.equal(JSON.stringify(calls[1]), JSON.stringify(["archive_photo", { photo_ids: ["photo"] }, "test"]));
 });
 
+test("archive reports when it starts and whether it worked", async () => {
+  for (const succeeds of [true, false]) {
+    const { controls, views } = libraryFixture({ entryId: "test", photoIds: ["photo"], libraryActions: ["archive", "trash"] });
+    const phases = [];
+    controls._onLibraryAction = (...args) => phases.push(args);
+    controls._run = async () => succeeds;
+    controls._changeInLibrary("archive");
+    await views[0].items.find(item => item.label === "Archive").action();
+    assert.equal(JSON.stringify(phases), JSON.stringify([["start", "archive", "test"], [succeeds ? "complete" : "failed", "archive", "test"]]));
+  }
+});
+
+function timingCardFixture() {
+  const fixture = navigationCardFixture();
+  const sent = [];
+  fixture.card._hass.callWS = message => { sent.push(message); return Promise.resolve(); };
+  const element = { removeAttribute() {}, replaceChildren() {}, classList: { remove() {} } };
+  fixture.card.shadowRoot = { getElementById: id => (id === "video" ? null : element) };
+  fixture.card._stopVideo = () => {};
+  let now = 1000;
+  const RealDate = vm.runInContext("Date", context);
+  context.Date = class extends RealDate { static now() { return now; } };
+  const hide = () => {
+    Object.assign(fixture.attrs, { hidden_revision: 1, frame_id: 2, entity_picture: "/photo.jpg?frame=2", displayed_photo_ids: ["photo-2"] });
+    fixture.card._maybeSwap();
+  };
+  return { ...fixture, sent, hide, tick: milliseconds => { now += milliseconds; }, restore: () => { delete context.Date; } };
+}
+
+test("an archive's answer, photo change and image load times reach Home Assistant once", () => {
+  const { card, requests, sent, hide, tick, restore } = timingCardFixture();
+  try {
+    card._libraryAction("start", "archive", "test");
+    tick(300);
+    hide();
+    tick(200);
+    card._libraryAction("complete", "archive", "test");
+    assert.equal(sent.length, 0);
+    tick(700);
+    requests.at(-1).onload();
+    assert.equal(sent.length, 1);
+    const { type, entry_id, action, answer_ms, photo_ms, load_ms } = sent[0];
+    assert.equal(JSON.stringify({ type, entry_id, action, answer_ms, photo_ms, load_ms }), JSON.stringify({
+      type: "album_slideshow/photo_action_timing", entry_id: "test", action: "archive", answer_ms: 500, photo_ms: 1200, load_ms: 900,
+    }));
+    assert.ok("client" in sent[0]);
+    hide();
+    requests.at(-1)?.onload?.();
+    assert.equal(sent.length, 1);
+  } finally {
+    restore();
+  }
+});
+
+test("the photo may change before the answer arrives", () => {
+  const { card, requests, sent, hide, tick, restore } = timingCardFixture();
+  try {
+    card._libraryAction("start", "trash", "test");
+    tick(100);
+    hide();
+    tick(400);
+    requests.at(-1).onload();
+    assert.equal(sent.length, 0);
+    tick(1500);
+    card._libraryAction("complete", "trash", "test");
+    assert.equal(sent.length, 1);
+    assert.equal(JSON.stringify([sent[0].answer_ms, sent[0].photo_ms, sent[0].load_ms]), JSON.stringify([2000, 500, 400]));
+  } finally {
+    restore();
+  }
+});
+
+test("an archive whose photo never changes reports after a minute; a failed one never does", () => {
+  const { card, sent, clock, tick, restore } = timingCardFixture();
+  try {
+    card._libraryAction("start", "archive", "test");
+    tick(800);
+    card._libraryAction("complete", "archive", "test");
+    clock.advance(59000);
+    assert.equal(sent.length, 0);
+    clock.advance(1000);
+    assert.equal(sent.length, 1);
+    assert.equal(JSON.stringify([sent[0].answer_ms, sent[0].photo_ms, sent[0].load_ms]), JSON.stringify([800, null, null]));
+    card._libraryAction("start", "archive", "test");
+    card._libraryAction("failed", "archive", "test");
+    clock.advance(120000);
+    assert.equal(sent.length, 1);
+  } finally {
+    restore();
+  }
+});
+
 test("paired archive and delete name each side", () => {
   const { controls, views, calls } = libraryFixture({ entryId: "test", photoIds: ["top", "bottom"], orientation: "vertical" });
   controls._changeInLibrary("trash");

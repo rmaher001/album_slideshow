@@ -390,6 +390,7 @@ MIN_VIDEO_HOLD_SECONDS = 5
 VIEWER_HEARTBEAT_SECONDS = 20
 VIEWER_GRACE_SECONDS = 60
 WS_VIEWER_HEARTBEAT = "album_slideshow/viewer_heartbeat"
+WS_PHOTO_ACTION_TIMING = "album_slideshow/photo_action_timing"
 
 MAX_RESOLUTION_OPTIONS = ["480p", "720p", "1080p", "1440p", "4K (2160p)", "original"]
 DEFAULT_MAX_RESOLUTION = "1080p"

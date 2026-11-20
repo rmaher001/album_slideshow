@@ -432,6 +432,9 @@ class AlbumSlideshowCamera(Camera):
         # serialises rapid presses while buffered swaps remain independent of
         # the background timer loop.
         self._navigation_lock: asyncio.Lock = asyncio.Lock()
+        # How long the last archive or trash took, on the server and, once the
+        # card reports it, on screen; diagnoses a screen that answers slowly.
+        self._last_photo_action: dict[str, Any] | None = None
         self._navigation_pending: int = 0
         # Rendered timeline around the current frame. Previous frames and future
         # frames are final encoded JPEGs, so both navigation directions are an
@@ -585,6 +588,7 @@ class AlbumSlideshowCamera(Camera):
             ),
             "hidden_photo_count": len(self.store.hidden_photo_ids),
             "hidden_revision": self.store.hidden_revision,
+            "last_photo_action": self._last_photo_action,
             "undo_hide_available": bool(self.store.last_hidden_photo_ids),
             "library_actions": (
                 ["archive", "trash"]
@@ -839,6 +843,7 @@ class AlbumSlideshowCamera(Camera):
         They also join the exclusion list, so the slideshow never shows them
         again even if a refresh still lists them; Undo hide leaves them there.
         """
+        started = time.monotonic()
         async with self._navigation_lock:
             if getattr(self.coordinator, "provider", None) != PROVIDER_IMMICH:
                 raise ValueError("Archive and delete work only for Immich slideshows")
@@ -859,6 +864,28 @@ class AlbumSlideshowCamera(Camera):
             except (ClientError, asyncio.TimeoutError) as err:
                 raise ValueError(f"Could not reach Immich to {action} the photo") from err
             await self._async_change_exclusions(photo_ids, hidden=True, remember=False)
+            self._last_photo_action = {
+                "action": action,
+                "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "server_ms": round((time.monotonic() - started) * 1000),
+                "answer_ms": None, "photo_ms": None, "load_ms": None, "client": None,
+            }
+            self.async_write_ha_state()
+
+    def async_record_action_timing(
+        self, action: str, *, answer_ms: int | None, photo_ms: int | None,
+        load_ms: int | None, client: str | None,
+    ) -> None:
+        """Add what a card measured for a photo action to its server time."""
+        last = self._last_photo_action
+        same = last is not None and last["action"] == action and last["answer_ms"] is None
+        self._last_photo_action = {
+            "action": action,
+            "at": last["at"] if same else datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "server_ms": last["server_ms"] if same else None,
+            "answer_ms": answer_ms, "photo_ms": photo_ms, "load_ms": load_ms, "client": client,
+        }
+        self.async_write_ha_state()
 
     def _select_photo_ids(
         self,

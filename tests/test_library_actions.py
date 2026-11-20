@@ -198,3 +198,92 @@ def test_archive_and_trash_services_reach_the_camera():
             await call("trash_photo", entry_id="test")
 
     asyncio.run(run())
+
+
+# ── how long a photo action takes ───────────────────────────────────────────
+
+
+def test_library_action_records_how_long_the_server_took(monkeypatch):
+    async def run():
+        cam, _items = await _immich_camera(monkeypatch)
+        assert cam.extra_state_attributes["last_photo_action"] is None
+        await cam.async_change_in_library("archive")
+        timing = cam.extra_state_attributes["last_photo_action"]
+        assert timing["action"] == "archive"
+        assert isinstance(timing["server_ms"], int) and timing["server_ms"] >= 0
+        assert timing["at"]
+        assert timing["answer_ms"] is None and timing["photo_ms"] is None
+
+    asyncio.run(run())
+
+
+def test_card_timing_joins_the_server_time_of_the_same_action(monkeypatch):
+    async def run():
+        cam, _items = await _immich_camera(monkeypatch)
+        await cam.async_change_in_library("trash")
+        server_ms = cam.extra_state_attributes["last_photo_action"]["server_ms"]
+        cam.async_record_action_timing(
+            "trash", answer_ms=1200, photo_ms=4100, load_ms=800, client="Mozilla/5.0 CrKey",
+        )
+        timing = cam.extra_state_attributes["last_photo_action"]
+        assert timing["action"] == "trash"
+        assert timing["server_ms"] == server_ms
+        assert (timing["answer_ms"], timing["photo_ms"], timing["load_ms"]) == (1200, 4100, 800)
+        assert timing["client"] == "Mozilla/5.0 CrKey"
+
+    asyncio.run(run())
+
+
+def test_card_timing_for_another_action_does_not_borrow_its_server_time(monkeypatch):
+    async def run():
+        cam, _items = await _immich_camera(monkeypatch)
+        await cam.async_change_in_library("archive")
+        cam.async_record_action_timing("trash", answer_ms=50, photo_ms=None, load_ms=None, client="x")
+        timing = cam.extra_state_attributes["last_photo_action"]
+        assert timing["action"] == "trash"
+        assert timing["server_ms"] is None
+        assert timing["photo_ms"] is None
+
+    asyncio.run(run())
+
+
+def test_action_timing_websocket_reaches_the_camera(monkeypatch):
+    import sys
+    import types
+
+    from custom_components.album_slideshow import async_register_action_timing_websocket
+    from custom_components.album_slideshow.const import WS_PHOTO_ACTION_TIMING
+
+    registered = []
+    stub = types.ModuleType("homeassistant.components.websocket_api")
+    stub.ERR_NOT_FOUND = "not_found"
+    stub.websocket_command = lambda schema: (lambda handler: setattr(handler, "schema", schema) or handler)
+    stub.async_register_command = lambda hass, handler: registered.append(handler)
+    monkeypatch.setitem(sys.modules, "homeassistant.components.websocket_api", stub)
+    monkeypatch.setattr(sys.modules["homeassistant.components"], "websocket_api", stub, raising=False)
+    cam = SimpleNamespace(async_record_action_timing=lambda *a, **k: calls.append((a, k)))
+    calls = []
+    hass = SimpleNamespace(data={"album_slideshow": {"album": {"camera": cam}}})
+    async_register_action_timing_websocket(hass)
+    (handler,) = registered
+    assert WS_PHOTO_ACTION_TIMING in handler.schema.values()
+
+    class Connection:
+        def __init__(self):
+            self.results, self.errors = [], []
+
+        def send_result(self, msg_id, result=None):
+            self.results.append(msg_id)
+
+        def send_error(self, msg_id, code, message):
+            self.errors.append((msg_id, code))
+
+    connection = Connection()
+    handler(hass, connection, {
+        "id": 3, "type": WS_PHOTO_ACTION_TIMING, "entry_id": "album", "action": "archive",
+        "answer_ms": 900, "photo_ms": 2500, "load_ms": 400, "client": "ua",
+    })
+    assert connection.results == [3]
+    assert calls == [(("archive",), {"answer_ms": 900, "photo_ms": 2500, "load_ms": 400, "client": "ua"})]
+    handler(hass, connection, {"id": 4, "type": WS_PHOTO_ACTION_TIMING, "entry_id": "missing", "action": "archive"})
+    assert connection.errors == [(4, "not_found")]

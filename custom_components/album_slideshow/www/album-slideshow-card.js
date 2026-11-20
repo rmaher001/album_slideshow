@@ -208,10 +208,11 @@ function isAlbumSlideshowCamera(state) {
 }
 
 class PhotoControls {
-  constructor(container, getHass, onActivity = () => {}, onNavigate = () => {}) {
+  constructor(container, getHass, onActivity = () => {}, onNavigate = () => {}, onLibraryAction = () => {}) {
     this._getHass = getHass;
     this._onActivity = onActivity;
     this._onNavigate = onNavigate;
+    this._onLibraryAction = onLibraryAction;
     this._state = {};
     this._busy = false;
     this._root = container.attachShadow({ mode: "open" });
@@ -466,7 +467,11 @@ class PhotoControls {
     const photoIds = this._actionPhotoIds();
     const archive = action === "archive";
     const icon = archive ? "mdi:archive-arrow-down" : "mdi:delete";
-    const run = (selected) => () => this._run(archive ? "archive_photo" : "trash_photo", { photo_ids: selected }, entryId);
+    const run = (selected) => async () => {
+      this._onLibraryAction?.("start", action, entryId);
+      const success = await this._run(archive ? "archive_photo" : "trash_photo", { photo_ids: selected }, entryId);
+      this._onLibraryAction?.(success ? "complete" : "failed", action, entryId);
+    };
     const single = photoIds.length === 1;
     const content = this._open(
       archive ? (single ? "Archive this photo?" : "Archive which photo?")
@@ -936,6 +941,7 @@ function createAlbumSlideshowCardClass(Base) {
     clearTimeout(this._captionClockTimer);
     this._captionClockTimer = null;
     this._cancelControlNavigation();
+    this._clearActionTiming();
     this._controlsReveal?.dispose();
     this._controlsReveal = null;
     clearTimeout(this._holdSwapTimer);
@@ -1000,6 +1006,7 @@ function createAlbumSlideshowCardClass(Base) {
     this._captionClockTimer = null;
     this._captionData = null;
     this._cancelControlNavigation();
+    this._clearActionTiming();
     this._controlsReveal?.dispose();
     this._controlsReveal = null;
     this._loadGeneration += 1;
@@ -1189,6 +1196,7 @@ function createAlbumSlideshowCardClass(Base) {
       this.shadowRoot.getElementById("photo-controls"), () => this._hass,
       () => this._controlsReveal?.activity(),
       (phase, entryId) => this._controlNavigation(phase, entryId),
+      (phase, action, entryId) => this._libraryAction(phase, action, entryId),
     );
     this.shadowRoot.getElementById("sound").addEventListener("click", (event) => {
       // Never let the speaker button open more-info or reveal controls.
@@ -1248,6 +1256,58 @@ function createAlbumSlideshowCardClass(Base) {
       }
     }
     this._maybeSwap();
+  }
+
+  // Times an archive or trash on this screen: tap to answer, tap to the next
+  // photo, and that photo's download. Home Assistant keeps the latest report
+  // in the camera's ``last_photo_action`` attribute beside its own time.
+  _libraryAction(phase, action, entryId) {
+    if (phase === "start") {
+      this._clearActionTiming();
+      this._actionTiming = {
+        action, entryId, started: Date.now(), revision: this._hiddenRevision,
+        answerMs: null, photoMs: null, loadMs: null,
+        timer: setTimeout(() => this._sendActionTiming(), 60000),
+      };
+      return;
+    }
+    const timing = this._actionTiming;
+    if (!timing || timing.action !== action || timing.entryId !== entryId) return;
+    if (phase === "failed") {
+      this._clearActionTiming();
+      return;
+    }
+    timing.answerMs = Date.now() - timing.started;
+    if (timing.photoMs !== null) this._sendActionTiming();
+  }
+
+  _actionPhotoShown(hiddenRevision, loadStarted) {
+    const timing = this._actionTiming;
+    if (!timing || timing.photoMs !== null || hiddenRevision === timing.revision) return;
+    const now = Date.now();
+    timing.photoMs = now - timing.started;
+    timing.loadMs = now - loadStarted;
+    if (timing.answerMs !== null) this._sendActionTiming();
+  }
+
+  _sendActionTiming() {
+    const timing = this._actionTiming;
+    this._clearActionTiming();
+    if (!timing || timing.answerMs === null) return;
+    this._hass?.callWS?.({
+      type: "album_slideshow/photo_action_timing",
+      entry_id: timing.entryId,
+      action: timing.action,
+      answer_ms: timing.answerMs,
+      photo_ms: timing.photoMs,
+      load_ms: timing.loadMs,
+      client: globalThis.navigator?.userAgent?.slice(0, 200) ?? null,
+    })?.catch?.(() => {});
+  }
+
+  _clearActionTiming() {
+    clearTimeout(this._actionTiming?.timer);
+    this._actionTiming = null;
   }
 
   _transitionStyles() {
@@ -1503,6 +1563,7 @@ function createAlbumSlideshowCardClass(Base) {
     const generation = ++this._loadGeneration;
     // Pre-decode the new image so the swap is instant.
     const next = new Image();
+    const loadStarted = Date.now();
     next.decoding = "async";
     next.onload = () => {
       if (generation !== this._loadGeneration) return;
@@ -1527,6 +1588,7 @@ function createAlbumSlideshowCardClass(Base) {
       this._photoEntryId = photoData.entryId;
       this._photoOrientation = photoData.orientation;
       this._performSwap(url, fit, blurBackdrop, captionData, samePhoto);
+      this._actionPhotoShown(photoData.hiddenRevision, loadStarted);
       this._startVideo(photoData.videoUrl, fit, generation, photoData.videoLoop !== false);
       if (this._navigationRequest && !this._navigationRequest.pending && photoData.frameId !== this._navigationRequest.frameId) {
         this._cancelControlNavigation();
