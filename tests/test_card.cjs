@@ -2614,3 +2614,95 @@ test("the library style's panel markup labels Archive and Trash", () => {
 test("in the library style the buttons start centred at the bottom, before any press", () => {
   assert.match(source, /photo_controls_style === "library" \? "#photo-controls \{ left: 0px; right: 0px; top: auto; bottom: 24px; max-width: none; \}"/);
 });
+
+// The frames' archive question in the pills' own style (rmaher001/ha-automations#737,
+// Richard 2026-11-20: the HA popup "is ugly and does not fit the style"; mock A).
+test("library question marks the answer and cancel for the pill look", () => {
+  const { controls, views } = libraryFixture({ entryId: "test", photoIds: ["photo"], libraryActions: ["archive", "trash"] });
+  controls._style = "library";
+  controls._changeInLibrary("archive");
+  assert.equal(views[0].items.find(item => item.label === "Archive").className, "go");
+  assert.equal(views[0].items.find(item => item.label === "Cancel").className, "cancel");
+  controls._changeInLibrary("trash");
+  assert.equal(views[1].items.find(item => item.label === "Trash").className, "go trash");
+});
+
+test("library question for a pair marks every answer", () => {
+  const { controls, views } = libraryFixture({ entryId: "test", photoIds: ["a", "b"], libraryActions: ["archive", "trash"] });
+  controls._style = "library";
+  controls._changeInLibrary("archive");
+  const answers = views[0].items.filter(item => item.label && item.label !== "Cancel");
+  assert.equal(answers.length, 3);
+  assert.ok(answers.every(item => item.className === "go"));
+});
+
+test("a tap outside the question closes it, a tap on it does not", () => {
+  const outside = vm.runInContext("outsideRect", context);
+  const rect = { left: 100, right: 400, top: 200, bottom: 400 };
+  assert.equal(outside(rect, 50, 300), true);
+  assert.equal(outside(rect, 250, 450), true);
+  assert.equal(outside(rect, 250, 300), false);
+  assert.equal(outside(rect, 100, 200), false, "the edge is the card");
+});
+
+test("library style draws the question as a dark card without a close button or shade", () => {
+  for (const rule of [
+    ':host([data-style="library"]) dialog {',
+    ':host([data-style="library"]) dialog::backdrop { background: transparent; }',
+    ':host([data-style="library"]) #close { display: none; }',
+    ':host([data-style="library"]) .choices button.go {',
+  ]) assert.ok(source.includes(rule), rule);
+});
+
+// Richard, 2026-11-20 on the kitchen iPad: "i long press and then i change my
+// mind" - a quick tap on the photo puts the controls away at once, instead of
+// holding the photo until they time out (rmaher001/ha-automations#737).
+test("a quick tap on the photo puts the revealed controls away", () => {
+  const fixture = revealFixture();
+  fixture.fire("pointerdown");
+  fixture.advance(500);
+  fixture.fire("pointerup");
+  assert.equal(fixture.container.hidden, false, "the long press itself keeps them");
+  fixture.fire("pointerdown");
+  fixture.advance(100);
+  fixture.fire("pointerup");
+  assert.equal(fixture.container.hidden, true);
+  assert.equal(fixture.reveal.holding, false);
+  assert.equal(fixture.resumes, 1, "the slideshow moves on again");
+  fixture.reveal.dispose();
+});
+
+test("a tap on the controls themselves or with a dialog open keeps them", () => {
+  const fixture = revealFixture();
+  fixture.fire("pointerdown");
+  fixture.advance(500);
+  fixture.fire("pointerup");
+  fixture.fire("pointerdown", {}, fixture.card, [fixture.container, fixture.card]);
+  fixture.fire("pointerup", {}, fixture.card, [fixture.container, fixture.card]);
+  assert.equal(fixture.container.hidden, false);
+  fixture.controls.active = true;
+  fixture.fire("pointerdown");
+  fixture.fire("pointerup");
+  assert.equal(fixture.container.hidden, false);
+  fixture.reveal.dispose();
+});
+
+// After the archive question closes - answered, cancelled or tapped away - the
+// controls go too and the slideshow moves on; they used to hold the photo for
+// up to a minute (Richard, 2026-11-20: "the 10 sec does not work", "stuck").
+test("dismiss puts the controls away even with a touch never reported finished", () => {
+  const fixture = revealFixture();
+  fixture.fire("pointerdown");
+  fixture.advance(500);
+  assert.equal(fixture.container.hidden, false);
+  fixture.reveal.dismiss();
+  assert.equal(fixture.container.hidden, true);
+  assert.equal(fixture.reveal.holding, false);
+  assert.equal(fixture.resumes, 1);
+  fixture.reveal.dispose();
+});
+
+test("the library card puts the controls away when its question closes", () => {
+  const F = source.slice(source.indexOf("this._photoControls = new PhotoControls("), source.indexOf("this._photoControls = new PhotoControls(") + 600);
+  assert.match(F, /c\.photo_controls_style,\s*\(\) => \{ if \(c\.photo_controls_style === "library"\) this\._controlsReveal\?\.dismiss\(\); \}/);
+});

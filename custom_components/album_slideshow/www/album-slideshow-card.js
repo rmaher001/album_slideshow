@@ -86,6 +86,11 @@ function normalizePhotoControlsStyle(value) {
   throw new Error(`album-slideshow-card: unknown photo controls style '${value}'`);
 }
 
+/** Whether a tap at (x, y) falls outside a rectangle; its edge counts as inside. */
+function outsideRect(rect, x, y) {
+  return x < rect.left || x > rect.right || y < rect.top || y > rect.bottom;
+}
+
 /** Where the library buttons sit: centred near the bottom of the pressed
  * photo of a pair, or of the whole slide when none was pressed. */
 function libraryControlsPlacement(target, vertical) {
@@ -225,8 +230,9 @@ function isAlbumSlideshowCamera(state) {
 }
 
 class PhotoControls {
-  constructor(container, getHass, onActivity = () => {}, onNavigate = () => {}, onLibraryAction = () => {}, style = "icons") {
+  constructor(container, getHass, onActivity = () => {}, onNavigate = () => {}, onLibraryAction = () => {}, style = "icons", onClose = () => {}) {
     this._getHass = getHass;
+    this._onClose = onClose;
     this._style = style;
     container.setAttribute("data-style", style);
     this._onActivity = onActivity;
@@ -267,6 +273,18 @@ class PhotoControls {
         :host([data-style="library"]) #library .icon { width: auto; flex: none; height: var(--as-control-size); padding: 0 calc(var(--as-control-size) * 0.5) 0 calc(var(--as-control-size) * 0.4); gap: calc(var(--as-control-size) * 0.2); border-radius: 999px; background: rgba(18, 20, 22, 0.78); color: #fff; font-weight: 600; font-size: calc(var(--as-control-size) * 0.38); white-space: nowrap; }
         :host([data-style="library"]) #library #trash { color: #ffb4a8; }
         :host([data-style="library"]) .label { display: inline; }
+        :host([data-style="library"]) dialog { width: min(360px, calc(100vw - 32px)); border: 0; border-radius: 22px; padding: 22px 22px 18px; background: rgba(18, 20, 22, 0.9); color: #fff; text-align: center; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4); }
+        :host([data-style="library"]) dialog::backdrop { background: transparent; }
+        :host([data-style="library"]) dialog:focus { outline: none; }
+        :host([data-style="library"]) header { justify-content: center; }
+        :host([data-style="library"]) h3 { font-size: 19px; font-weight: 700; }
+        :host([data-style="library"]) #close { display: none; }
+        :host([data-style="library"]) small { color: rgba(255, 255, 255, 0.7); flex-basis: 100%; margin: 0; order: -2; }
+        :host([data-style="library"]) .choices { flex-direction: row; flex-wrap: wrap; justify-content: center; gap: 16px 10px; margin-top: 6px; }
+        :host([data-style="library"]) .choices button { border-radius: 999px; padding: 0 18px; font-weight: 600; background: rgba(255, 255, 255, 0.14); color: #fff; }
+        :host([data-style="library"]) .choices button.cancel { order: -1; }
+        :host([data-style="library"]) .choices button.go { background: #fff; color: #141618; }
+        :host([data-style="library"]) .choices button.go.trash { background: #ffb4a8; }
       </style>
       <div class="toolbar">
         <div class="target" id="target" hidden></div>
@@ -286,14 +304,22 @@ class PhotoControls {
         </div>
       </div>
       <div id="error" class="error" role="alert" hidden></div>
-      <dialog aria-labelledby="title">
+      <dialog aria-labelledby="title" tabindex="-1">
         <header><h3 id="title">Hidden photos</h3><button type="button" class="icon" id="close" title="Close" aria-label="Close"><ha-icon icon="mdi:close"></ha-icon></button></header>
         <div id="dialog-error" class="error" role="alert" hidden></div>
         <div id="content"></div>
       </dialog>
     `;
     this._dialog = this._root.querySelector("dialog");
-    this._dialog.addEventListener("close", () => this._onActivity());
+    this._dialog.addEventListener("close", () => {
+      this._onActivity();
+      // After the action that closed it has finished (busy cleared).
+      setTimeout(() => this._onClose(), 0);
+    });
+    // The library look has no close button or shade: a tap off the card closes it.
+    this._dialog.addEventListener("click", (event) => {
+      if (this._style === "library" && !this._busy && outsideRect(this._dialog.getBoundingClientRect(), event.clientX, event.clientY)) this._dialog.close();
+    });
     container.addEventListener("click", (event) => event.stopPropagation());
     this._root.getElementById("previous").addEventListener("click", () => this._navigate("previous_slide"));
     this._root.getElementById("next").addEventListener("click", () => this._navigate("next_slide"));
@@ -457,6 +483,8 @@ class PhotoControls {
     const content = this._root.getElementById("content");
     content.replaceChildren();
     if (!this._dialog.open) this._dialog.showModal();
+    // No answer pre-selected (and no focus ring on one) in the library look.
+    if (this._style === "library") this._dialog.focus();
     this._onActivity?.();
     return content;
   }
@@ -500,6 +528,7 @@ class PhotoControls {
       this._onLibraryAction?.(success ? "complete" : "failed", action, entryId);
     };
     const single = photoIds.length === 1;
+    const answer = archive ? "go" : "go trash";
     const content = this._open(
       archive ? (single ? "Archive this photo?" : "Archive which photo?")
         : short ? (single ? "Trash this photo?" : "Trash which photo?")
@@ -512,6 +541,7 @@ class PhotoControls {
     if (single) {
       const confirm = this._button(archive ? "Archive" : short ? "Trash" : "Move to trash", icon, run(photoIds));
       confirm.disabled = !photoIds[0];
+      if (short) confirm.className = answer;
       content.appendChild(confirm);
     } else {
       const sides = orientation === "vertical" ? ["top", "bottom"] : ["left", "right"];
@@ -519,13 +549,17 @@ class PhotoControls {
         const label = archive ? `Archive ${sides[index]} photo` : short ? `Trash ${sides[index]} photo` : `Move ${sides[index]} photo to trash`;
         const button = this._button(label, icon, run([photoId]));
         button.disabled = !photoId;
+        if (short) button.className = answer;
         content.appendChild(button);
       });
       const both = this._button(archive ? "Archive both photos" : short ? "Trash both photos" : "Move both photos to trash", icon, run(photoIds));
       both.disabled = photoIds.length !== 2 || photoIds.some((photoId) => !photoId);
+      if (short) both.className = answer;
       content.appendChild(both);
     }
-    content.appendChild(this._button("Cancel", "mdi:close", () => this.close()));
+    const cancel = this._button("Cancel", "mdi:close", () => this.close());
+    if (short) cancel.className = "cancel";
+    content.appendChild(cancel);
   }
 
   _note(text) {
@@ -615,7 +649,14 @@ class PhotoControlsReveal {
     });
     this._listen(card, "pointerdown", (event) => this._pointerDown(event));
     this._listen(card, "pointermove", (event) => this._pointerMove(event));
-    this._listen(card, "pointerup", () => { this._cancelPress(); this.activity(); });
+    this._listen(card, "pointerup", () => {
+      // A quick touch tap on the photo while the controls are up puts them
+      // away at once: the viewer changed their mind (ha-automations#737).
+      const tap = this._visible && this._pressTimer !== null && this._pointer?.type !== "mouse";
+      this._cancelPress();
+      if (tap) this.hide();
+      else this.activity();
+    });
     this._listen(card, "pointercancel", () => { this._cancelPress(); this.activity(); });
     this._listen(card, "click", (event) => {
       if (event.composedPath().includes(container)) {
@@ -679,6 +720,12 @@ class PhotoControlsReveal {
     this._idleTimer = null;
     this._cancelPress(false);
     if (wasHolding) this._resume();
+  }
+
+  /** Put the controls away now, whatever touch is still on record. */
+  dismiss() {
+    this._cancelPress(false);
+    this.hide();
   }
 
   activity() {
@@ -1228,6 +1275,7 @@ function createAlbumSlideshowCardClass(Base) {
       (phase, entryId) => this._controlNavigation(phase, entryId),
       (phase, action, entryId) => this._libraryAction(phase, action, entryId),
       c.photo_controls_style,
+      () => { if (c.photo_controls_style === "library") this._controlsReveal?.dismiss(); },
     );
     this.shadowRoot.getElementById("sound").addEventListener("click", (event) => {
       // Never let the speaker button open more-info or reveal controls.
