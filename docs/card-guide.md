@@ -88,6 +88,13 @@ For YAML, use `photo_controls: off`, `on_demand`, or `always`. Existing
 Paired slides offer explicit **left/right** or **top/bottom** choices, plus
 **Hide both photos**.
 
+`photo_controls_style: library` trims the toolbar to just **Archive** and
+**Trash**, as labelled buttons centred near the bottom of the photo (or of the
+pressed photo on a paired slide), for a frame where the slideshow should run
+itself and the only thing worth doing to a photo is taking it out of the
+library. Previous, Pause, Next, Hide, Undo hide and Hidden photos are left out;
+the default, `icons`, keeps them all.
+
 The toolbar's buttons are 44px. On a wall display or other touch screen where
 that is too small, set the CSS variable `--album-slideshow-control-size` on the
 card or any element around it (for example `80px`); the buttons, icons and the

@@ -2558,3 +2558,59 @@ test("a request Home Assistant never answers fails after 40 seconds instead of h
   timer.callback();
   await assert.rejects(pending, /did not answer/);
 });
+
+// photo_controls_style: library - a long press shows just Archive and Trash,
+// labelled, over the pressed photo.
+test("photo_controls_style chooses the icon toolbar or just the library buttons", () => {
+  const card = Object.create(Card.prototype);
+  card.setConfig({ entity: "camera.test", photo_controls: "on_demand" });
+  assert.equal(card._config.photo_controls_style, "icons");
+  card.setConfig({ entity: "camera.test", photo_controls: "on_demand", photo_controls_style: "library" });
+  assert.equal(card._config.photo_controls_style, "library");
+  assert.throws(() => card.setConfig({ entity: "camera.test", photo_controls_style: "big" }), /unknown photo controls style/);
+});
+
+test("the library buttons sit near the bottom of the pressed photo, or of the slide", () => {
+  const place = vm.runInContext("libraryControlsPlacement", context);
+  assert.equal(JSON.stringify(place(null, false)), JSON.stringify({ left: "0px", right: "0px", top: "auto", bottom: "24px" }));
+  assert.equal(JSON.stringify(place(0, false)), JSON.stringify({ left: "0px", right: "50%", top: "auto", bottom: "24px" }));
+  assert.equal(JSON.stringify(place(1, false)), JSON.stringify({ left: "50%", right: "0px", top: "auto", bottom: "24px" }));
+  assert.equal(JSON.stringify(place(0, true)), JSON.stringify({ left: "0px", right: "0px", top: "auto", bottom: "calc(50% + 24px)" }));
+  assert.equal(JSON.stringify(place(1, true)), JSON.stringify({ left: "0px", right: "0px", top: "auto", bottom: "24px" }));
+});
+
+test("in the library style a pressed photo moves the buttons over it", () => {
+  const card = Object.create(Card.prototype);
+  const el = () => ({ hidden: true, style: { cssText: "", left: "", right: "", top: "", bottom: "" } });
+  const elements = { "target-ring": el(), "target-dim": el(), "photo-controls": el(),
+    stage: { getBoundingClientRect: () => ({ left: 0, top: 0, width: 1000, height: 600 }) } };
+  Object.defineProperty(card, "shadowRoot", { value: { getElementById: id => elements[id] } });
+  card._config = { photo_controls_style: "library" };
+  card._photoControls = { update() {} };
+  card._displayedPhotoIds = ["left", "right"];
+  card._photoOrientation = "horizontal";
+  card._setControlsTarget({ x: 900, y: 300 });
+  const style = elements["photo-controls"].style;
+  assert.equal(`${style.left}|${style.right}|${style.bottom}`, "50%|0px|24px");
+  card._setControlsTarget(null);
+  assert.equal(`${style.left}|${style.right}|${style.bottom}`, "0px|0px|24px");
+});
+
+test("in the library style the trash is called Trash", () => {
+  const { controls, views, calls } = libraryFixture({ entryId: "test", photoIds: ["photo"], libraryActions: ["archive", "trash"] });
+  controls._style = "library";
+  controls._changeInLibrary("trash");
+  assert.equal(views[0].title, "Trash this photo?");
+  views[0].items.find(item => item.label === "Trash").action();
+  assert.equal(JSON.stringify(calls), JSON.stringify([["trash_photo", { photo_ids: ["photo"] }, "test"]]));
+});
+
+test("the library style's panel markup labels Archive and Trash", () => {
+  assert.match(source, /<span class="label">Archive<\/span>/);
+  assert.match(source, /<span class="label">Trash<\/span>/);
+  assert.match(source, /:host\(\[data-style="library"\]\) \.control-group:not\(#library\)/);
+});
+
+test("in the library style the buttons start centred at the bottom, before any press", () => {
+  assert.match(source, /photo_controls_style === "library" \? "#photo-controls \{ left: 0px; right: 0px; top: auto; bottom: 24px; max-width: none; \}"/);
+});

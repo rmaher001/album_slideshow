@@ -78,6 +78,23 @@ function normalizeVideoAudio(value) {
   throw new Error(`album-slideshow-card: unknown video_audio mode '${value}'`);
 }
 
+/** ``icons``: the full icon toolbar. ``library``: just Archive and Trash,
+ * labelled, over the pressed photo. */
+function normalizePhotoControlsStyle(value) {
+  if (value == null || value === "icons") return "icons";
+  if (value === "library") return "library";
+  throw new Error(`album-slideshow-card: unknown photo controls style '${value}'`);
+}
+
+/** Where the library buttons sit: centred near the bottom of the pressed
+ * photo of a pair, or of the whole slide when none was pressed. */
+function libraryControlsPlacement(target, vertical) {
+  const band = { left: "0px", right: "0px", top: "auto", bottom: "24px" };
+  if (!Number.isInteger(target)) return band;
+  if (vertical) return target === 0 ? { ...band, bottom: "calc(50% + 24px)" } : band;
+  return target === 0 ? { ...band, right: "50%" } : { ...band, left: "50%" };
+}
+
 function normalizePhotoControls(value) {
   if (value == null || value === false) return "off";
   if (value === true) return "always";
@@ -208,8 +225,10 @@ function isAlbumSlideshowCamera(state) {
 }
 
 class PhotoControls {
-  constructor(container, getHass, onActivity = () => {}, onNavigate = () => {}, onLibraryAction = () => {}) {
+  constructor(container, getHass, onActivity = () => {}, onNavigate = () => {}, onLibraryAction = () => {}, style = "icons") {
     this._getHass = getHass;
+    this._style = style;
+    container.setAttribute("data-style", style);
     this._onActivity = onActivity;
     this._onNavigate = onNavigate;
     this._onLibraryAction = onLibraryAction;
@@ -241,6 +260,13 @@ class PhotoControls {
         .pagination { display: flex; gap: 8px; align-items: center; font-size: 13px; }
         .error { margin: 8px 0; max-width: 320px; padding: 8px; background: var(--card-background-color, #fff); color: var(--error-color, #b71c1c); overflow-wrap: anywhere; }
         [hidden] { display: none !important; }
+        .label { display: none; }
+        :host([data-style="library"]) .toolbar { display: flex; width: fit-content; margin: 0 auto; gap: calc(var(--as-control-size) * 0.35); padding: 0; background: none; }
+        :host([data-style="library"]) .target, :host([data-style="library"]) .control-group:not(#library) { display: none !important; }
+        :host([data-style="library"]) #library { gap: calc(var(--as-control-size) * 0.35); }
+        :host([data-style="library"]) #library .icon { width: auto; flex: none; height: var(--as-control-size); padding: 0 calc(var(--as-control-size) * 0.5) 0 calc(var(--as-control-size) * 0.4); gap: calc(var(--as-control-size) * 0.2); border-radius: 999px; background: rgba(18, 20, 22, 0.78); color: #fff; font-weight: 600; font-size: calc(var(--as-control-size) * 0.38); white-space: nowrap; }
+        :host([data-style="library"]) #library #trash { color: #ffb4a8; }
+        :host([data-style="library"]) .label { display: inline; }
       </style>
       <div class="toolbar">
         <div class="target" id="target" hidden></div>
@@ -255,8 +281,8 @@ class PhotoControls {
           <button type="button" class="icon" id="manage" title="Hidden photos" aria-label="Hidden photos"><ha-icon icon="mdi:image-off-outline"></ha-icon></button>
         </div>
         <div class="control-group" role="group" aria-label="Photo library" id="library" hidden>
-          <button type="button" class="icon" id="archive" title="Archive photo" aria-label="Archive photo"><ha-icon icon="mdi:archive-arrow-down"></ha-icon></button>
-          <button type="button" class="icon" id="trash" title="Move photo to trash" aria-label="Move photo to trash"><ha-icon icon="mdi:delete"></ha-icon></button>
+          <button type="button" class="icon" id="archive" title="Archive photo" aria-label="Archive photo"><ha-icon icon="mdi:archive-arrow-down"></ha-icon><span class="label">Archive</span></button>
+          <button type="button" class="icon" id="trash" title="Move photo to trash" aria-label="Move photo to trash"><ha-icon icon="mdi:delete"></ha-icon><span class="label">Trash</span></button>
         </div>
       </div>
       <div id="error" class="error" role="alert" hidden></div>
@@ -466,6 +492,7 @@ class PhotoControls {
     const { orientation, entryId } = this._state;
     const photoIds = this._actionPhotoIds();
     const archive = action === "archive";
+    const short = this._style === "library";
     const icon = archive ? "mdi:archive-arrow-down" : "mdi:delete";
     const run = (selected) => async () => {
       this._onLibraryAction?.("start", action, entryId);
@@ -475,25 +502,26 @@ class PhotoControls {
     const single = photoIds.length === 1;
     const content = this._open(
       archive ? (single ? "Archive this photo?" : "Archive which photo?")
-        : (single ? "Move this photo to the trash?" : "Move which photo to the trash?"),
+        : short ? (single ? "Trash this photo?" : "Trash which photo?")
+          : (single ? "Move this photo to the trash?" : "Move which photo to the trash?"),
     );
     content.className = "choices";
     content.appendChild(this._note(
       archive ? "It stays in Immich, off the timeline." : "Immich keeps it in the trash, where you can restore it.",
     ));
     if (single) {
-      const confirm = this._button(archive ? "Archive" : "Move to trash", icon, run(photoIds));
+      const confirm = this._button(archive ? "Archive" : short ? "Trash" : "Move to trash", icon, run(photoIds));
       confirm.disabled = !photoIds[0];
       content.appendChild(confirm);
     } else {
       const sides = orientation === "vertical" ? ["top", "bottom"] : ["left", "right"];
       photoIds.forEach((photoId, index) => {
-        const label = archive ? `Archive ${sides[index]} photo` : `Move ${sides[index]} photo to trash`;
+        const label = archive ? `Archive ${sides[index]} photo` : short ? `Trash ${sides[index]} photo` : `Move ${sides[index]} photo to trash`;
         const button = this._button(label, icon, run([photoId]));
         button.disabled = !photoId;
         content.appendChild(button);
       });
-      const both = this._button(archive ? "Archive both photos" : "Move both photos to trash", icon, run(photoIds));
+      const both = this._button(archive ? "Archive both photos" : short ? "Trash both photos" : "Move both photos to trash", icon, run(photoIds));
       both.disabled = photoIds.length !== 2 || photoIds.some((photoId) => !photoId);
       content.appendChild(both);
     }
@@ -847,6 +875,7 @@ function createAlbumSlideshowCardClass(Base) {
       videos: config.videos !== false,
       video_audio: normalizeVideoAudio(config.video_audio),
       photo_controls: normalizePhotoControls(config.photo_controls),
+      photo_controls_style: normalizePhotoControlsStyle(config.photo_controls_style),
       // Number of seconds the card freezes its visible slide after a
       // tap, so the more-info dialog can settle without the slideshow
       // marching forward beneath it. Set to 0 to disable.
@@ -1155,6 +1184,7 @@ function createAlbumSlideshowCardClass(Base) {
         .target-dim { position: absolute; background: rgba(0, 0, 0, .35); pointer-events: none; z-index: 2; }
         .target-ring[hidden], .target-dim[hidden] { display: none; }
         #photo-controls { position: absolute; right: 8px; max-width: calc(100% - 16px); ${toolbarEdge}: 8px; z-index: 3; }
+        ${c.photo_controls_style === "library" ? "#photo-controls { left: 0px; right: 0px; top: auto; bottom: 24px; max-width: none; }" : ""}
         .cap-box.cap-shadow {
           text-shadow:
             0 1px 2px rgba(0, 0, 0, 0.9),
@@ -1197,6 +1227,7 @@ function createAlbumSlideshowCardClass(Base) {
       () => this._controlsReveal?.activity(),
       (phase, entryId) => this._controlNavigation(phase, entryId),
       (phase, action, entryId) => this._libraryAction(phase, action, entryId),
+      c.photo_controls_style,
     );
     this.shadowRoot.getElementById("sound").addEventListener("click", (event) => {
       // Never let the speaker button open more-info or reveal controls.
@@ -1523,10 +1554,14 @@ function createAlbumSlideshowCardClass(Base) {
         ring.style.cssText = half(target);
         dim.style.cssText = half(1 - target);
       }
-      controls.style.right = !vertical && target === 0 ? "calc(50% + 8px)" : "";
-      controls.style.top = vertical && target === 1 ? "calc(50% + 8px)" : "";
-      controls.style.bottom = vertical && target !== null ? "auto" : "";
-      if (vertical && target === 0) controls.style.top = "8px";
+      if (this._config?.photo_controls_style === "library") {
+        Object.assign(controls.style, libraryControlsPlacement(target, vertical));
+      } else {
+        controls.style.right = !vertical && target === 0 ? "calc(50% + 8px)" : "";
+        controls.style.top = vertical && target === 1 ? "calc(50% + 8px)" : "";
+        controls.style.bottom = vertical && target !== null ? "auto" : "";
+        if (vertical && target === 0) controls.style.top = "8px";
+      }
     }
     this._refreshPhotoControls(this._hass?.states?.[this._config?.entity]?.attributes || {});
   }
