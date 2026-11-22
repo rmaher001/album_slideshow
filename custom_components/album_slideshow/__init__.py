@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 
 import voluptuous as vol
 
@@ -34,6 +35,20 @@ PLATFORMS: list[str] = ["camera", "sensor", "button", "number", "select", "text"
 
 CARD_STATIC_PATH = "/album_slideshow_static"
 CARD_FILE = "album-slideshow-card.js"
+# The card is served as album-slideshow-card-<build>.js: caches let go of it
+# only when its name changes, so every change to the card appends a build.
+# Older names keep answering: a cached page must never get a 404.
+CARD_BUILDS = ("20261122175733",)
+CARD_BUILD = CARD_BUILDS[-1]
+_CARD_PATH_RE = re.compile(
+    rf"{CARD_STATIC_PATH}/album-slideshow-card(-\d{{14}})?\.js"
+)
+
+
+def _card_url(version: str | None, build: str = CARD_BUILD) -> str:
+    """The address browsers load the card from."""
+    path = f"{CARD_STATIC_PATH}/album-slideshow-card-{build}.js"
+    return f"{path}?v={version}" if version else path
 
 
 async def _async_register_card(hass: HomeAssistant) -> None:
@@ -78,7 +93,13 @@ async def _async_register_card(hass: HomeAssistant) -> None:
         from homeassistant.components.http import StaticPathConfig
 
         await hass.http.async_register_static_paths(
-            [StaticPathConfig(CARD_STATIC_PATH, www_dir, False)]
+            [
+                *(
+                    StaticPathConfig(_card_url(None, build), card_path, False)
+                    for build in CARD_BUILDS
+                ),
+                StaticPathConfig(CARD_STATIC_PATH, www_dir, False),
+            ]
         )
     except Exception:  # noqa: BLE001 - many possible failure modes here
         _LOGGER.exception(
@@ -92,9 +113,7 @@ async def _async_register_card(hass: HomeAssistant) -> None:
     version = await hass.async_add_executor_job(
         _read_card_version, integration_dir
     )
-    card_url = f"{CARD_STATIC_PATH}/{CARD_FILE}"
-    if version:
-        card_url = f"{card_url}?v={version}"
+    card_url = _card_url(version)
 
     # Prefer registering the card as a Lovelace resource for storage-mode
     # dashboards. Resources are loaded as part of the Lovelace bootstrap,
@@ -205,7 +224,6 @@ async def _try_register_lovelace_resource(
             except Exception:  # noqa: BLE001
                 items = []
 
-        base = card_url.split("?", 1)[0]
         same_version_present = False
         stale_ids: list[str] = []
         for item in items:
@@ -215,15 +233,15 @@ async def _try_register_lovelace_resource(
             else:
                 url = getattr(item, "url", "") or ""
                 item_id = getattr(item, "id", None)
-            if url.split("?", 1)[0] != base:
+            if not _CARD_PATH_RE.fullmatch(url.split("?", 1)[0]):
                 continue
             if url == card_url:
                 same_version_present = True
             elif item_id:
                 stale_ids.append(item_id)
 
-        # Strip stale registrations (older versions of the card pinned via
-        # an out-of-date ``?v=...`` query) so the dashboard doesn't pull
+        # Strip stale registrations (older builds of the card, by file name
+        # or ``?v=...`` query) so the dashboard doesn't pull
         # both the new and the old script.
         for item_id in stale_ids:
             try:
@@ -366,9 +384,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         version = await hass.async_add_executor_job(
             _read_card_version, integration_dir
         )
-        card_url = f"{CARD_STATIC_PATH}/{CARD_FILE}"
-        if version:
-            card_url = f"{card_url}?v={version}"
+        card_url = _card_url(version)
         if await _try_register_lovelace_resource(hass, card_url):
             hass.data.setdefault(DOMAIN, {})[
                 "lovelace_resource_registered"

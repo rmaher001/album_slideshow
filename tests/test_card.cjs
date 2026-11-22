@@ -2615,16 +2615,13 @@ test("in the library style the buttons start centred at the bottom, before any p
   assert.match(source, /photo_controls_style === "library" \? "#photo-controls \{ left: 0px; right: 0px; top: auto; bottom: 24px; max-width: none; \}"/);
 });
 
-// The frames' archive question in the pills' own style (rmaher001/ha-automations#737,
-// Richard 2026-11-20: the HA popup "is ugly and does not fit the style"; mock A).
+// The library style's question, in the pills' own style.
 test("library question marks the answer and cancel for the pill look", () => {
   const { controls, views } = libraryFixture({ entryId: "test", photoIds: ["photo"], libraryActions: ["archive", "trash"] });
   controls._style = "library";
-  controls._changeInLibrary("archive");
-  assert.equal(views[0].items.find(item => item.label === "Archive").className, "go");
-  assert.equal(views[0].items.find(item => item.label === "Cancel").className, "cancel");
   controls._changeInLibrary("trash");
-  assert.equal(views[1].items.find(item => item.label === "Trash").className, "go trash");
+  assert.equal(views[0].items.find(item => item.label === "Trash").className, "go trash");
+  assert.equal(views[0].items.find(item => item.label === "Cancel").className, "cancel");
 });
 
 test("library question for a pair marks every answer", () => {
@@ -2654,9 +2651,8 @@ test("library style draws the question as a dark card without a close button or 
   ]) assert.ok(source.includes(rule), rule);
 });
 
-// Richard, 2026-11-20 on the kitchen iPad: "i long press and then i change my
-// mind" - a quick tap on the photo puts the controls away at once, instead of
-// holding the photo until they time out (rmaher001/ha-automations#737).
+// A quick tap on the photo after a long press means the viewer changed their
+// mind: the controls go at once instead of holding the photo until they time out.
 test("a quick tap on the photo puts the revealed controls away", () => {
   const fixture = revealFixture();
   fixture.fire("pointerdown");
@@ -2689,7 +2685,7 @@ test("a tap on the controls themselves or with a dialog open keeps them", () => 
 
 // After the archive question closes - answered, cancelled or tapped away - the
 // controls go too and the slideshow moves on; they used to hold the photo for
-// up to a minute (Richard, 2026-11-20: "the 10 sec does not work", "stuck").
+// up to a minute.
 test("dismiss puts the controls away even with a touch never reported finished", () => {
   const fixture = revealFixture();
   fixture.fire("pointerdown");
@@ -2705,4 +2701,167 @@ test("dismiss puts the controls away even with a touch never reported finished",
 test("the library card puts the controls away when its question closes", () => {
   const F = source.slice(source.indexOf("this._photoControls = new PhotoControls("), source.indexOf("this._photoControls = new PhotoControls(") + 600);
   assert.match(F, /c\.photo_controls_style,\s*\(\) => \{ if \(c\.photo_controls_style === "library"\) this\._controlsReveal\?\.dismiss\(\); \}/);
+});
+
+// The library style archives a known photo without asking.
+for (const [name, state, expected] of [
+  ["a single photo", { photoIds: ["only"], target: null }, "only"],
+  ["the pressed left photo", { photoIds: ["left", "right"], target: 0 }, "left"],
+  ["the pressed right photo", { photoIds: ["left", "right"], target: 1 }, "right"],
+]) {
+  test(`library archive acts at once on ${name}`, async () => {
+    const { controls, views, calls } = libraryFixture({ entryId: "test", ...state });
+    controls._style = "library";
+    controls._onClose = () => {};
+    await controls._changeInLibrary("archive");
+    assert.equal(views.length, 0, "no question");
+    assert.equal(JSON.stringify(calls), JSON.stringify([["archive_photo", { photo_ids: [expected] }, "test"]]));
+  });
+}
+
+test("library archive puts the controls away only when it worked", async () => {
+  for (const succeeds of [true, false]) {
+    const { controls } = libraryFixture({ entryId: "test", photoIds: ["photo"] });
+    const events = [];
+    controls._style = "library";
+    controls._run = async () => succeeds;
+    controls._onLibraryAction = phase => events.push(phase);
+    controls._onClose = () => events.push("closed");
+    await controls._changeInLibrary("archive");
+    assert.equal(events.join(","), succeeds ? "start,complete,closed" : "start,failed");
+  }
+});
+
+test("a second archive while one is under way changes nothing", async () => {
+  const { controls, views, calls } = libraryFixture({ entryId: "test", photoIds: ["photo"] });
+  const events = [];
+  controls._style = "library";
+  controls._busy = true;
+  controls._onLibraryAction = phase => events.push(phase);
+  await controls._changeInLibrary("archive");
+  assert.equal(views.length + calls.length + events.length, 0);
+});
+
+test("library archive does nothing without a photo", async () => {
+  const { controls, views, calls } = libraryFixture({ entryId: "test", photoIds: [""] });
+  controls._style = "library";
+  await controls._changeInLibrary("archive");
+  assert.equal(views.length + calls.length, 0);
+});
+
+// The controls appear under the finger that is still down from the long press.
+test("library archive needs a press that began on the button", () => {
+  const { controls } = libraryFixture({});
+  const actions = [];
+  controls._style = "library";
+  controls._changeInLibrary = action => actions.push(action);
+  controls._archiveClicked({ detail: 1 });
+  assert.equal(actions.length, 0, "the long press's own release");
+  controls._archivePressed = true;
+  controls._archiveClicked({ detail: 1 });
+  controls._archiveClicked({ detail: 1 });
+  assert.equal(actions.length, 1, "one press, one archive");
+  controls._archiveClicked({ detail: 0 });
+  assert.equal(actions.length, 2, "keyboard and screen readers");
+  controls._archivePressed = true;
+  controls.disarm();
+  controls._archiveClicked({ detail: 1 });
+  assert.equal(actions.length, 2, "an abandoned press does not carry over");
+});
+
+test("the icons style still asks on any click", () => {
+  const { controls } = libraryFixture({});
+  const actions = [];
+  controls._style = "icons";
+  controls._changeInLibrary = action => actions.push(action);
+  controls._archiveClicked({ detail: 1 });
+  assert.equal(actions.length, 1);
+});
+
+test("aiming or hiding the controls forgets an earlier press", () => {
+  const card = Object.create(Card.prototype);
+  let disarmed = 0;
+  card._photoControls = { disarm: () => { disarmed += 1; } };
+  card._refreshPhotoControls = () => {};
+  card._setControlsTarget(null);
+  assert.equal(disarmed, 1);
+});
+
+function wiredControls() {
+  const elements = new Map();
+  const element = () => Object.assign(new EventTarget(), {
+    hidden: false, disabled: false, textContent: "", setAttribute() {}, close() {},
+    querySelector: () => ({ setAttribute() {} }), querySelectorAll: () => [],
+  });
+  const get = id => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); };
+  const root = { getElementById: get, querySelector: () => get("dialog") };
+  const container = Object.assign(new EventTarget(), { setAttribute() {}, attachShadow: () => root });
+  const controls = new PhotoControls(container, () => ({}), undefined, undefined, undefined, "library");
+  const actions = [];
+  controls._changeInLibrary = action => actions.push(action);
+  const fire = (id, type, props = {}) => {
+    const event = Object.assign(new Event(type, { cancelable: true }), props);
+    Object.defineProperty(event, "detail", { value: props.clicks ?? 0 });
+    get(id).dispatchEvent(event);
+    return event;
+  };
+  return { controls, actions, fire, get };
+}
+
+test("a press on Archive arms Archive, a press on Trash does not", () => {
+  const { actions, fire } = wiredControls();
+  fire("trash", "pointerdown");
+  fire("archive", "click", { clicks: 1 });
+  assert.equal(actions.length, 0);
+  fire("archive", "pointerdown");
+  fire("archive", "click", { clicks: 1 });
+  assert.equal(actions.join(","), "archive");
+});
+
+test("a held key cannot archive", () => {
+  const { fire } = wiredControls();
+  for (const key of ["Enter", " "]) {
+    assert.equal(fire("archive", "keydown", { key, repeat: true }).defaultPrevented, true);
+  }
+  assert.equal(fire("archive", "keydown", { key: "Tab", repeat: true }).defaultPrevented, false);
+  assert.equal(fire("archive", "keydown", { repeat: false }).defaultPrevented, false);
+});
+
+test("a failure is reported until the controls are put away", () => {
+  const { controls } = wiredControls();
+  controls._error("Immich said no");
+  assert.equal(controls.failed, true);
+  controls.disarm();
+  assert.equal(controls.failed, false);
+});
+
+test("the error outlives the failure itself", async () => {
+  const { controls, get } = wiredControls();
+  await controls._runAction(async () => { throw new Error("Immich said no"); });
+  assert.equal(controls.failed, true);
+  assert.equal(get("error").hidden, false);
+});
+
+test("only the library look holds the photo for an error", () => {
+  const { controls } = wiredControls();
+  controls._style = "icons";
+  controls._error("Hide failed");
+  assert.equal(controls.failed, false);
+});
+
+test("a failed archive stays readable for a minute, and a tap still puts it away", () => {
+  const timed = revealFixture();
+  timed.fire("pointerdown"); timed.advance(500); timed.fire("pointerup");
+  timed.controls.failed = true;
+  timed.advance(30000);
+  assert.equal(timed.container.hidden, false);
+  timed.advance(35000);
+  assert.equal(timed.container.hidden, true);
+  timed.reveal.dispose();
+  const tapped = revealFixture();
+  tapped.fire("pointerdown"); tapped.advance(500); tapped.fire("pointerup");
+  tapped.controls.failed = true;
+  tapped.fire("pointerdown"); tapped.fire("pointerup");
+  assert.equal(tapped.container.hidden, true);
+  tapped.reveal.dispose();
 });

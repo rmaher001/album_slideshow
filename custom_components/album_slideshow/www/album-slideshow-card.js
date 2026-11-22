@@ -327,7 +327,11 @@ class PhotoControls {
     this._root.getElementById("hide").addEventListener("click", () => this._hide());
     this._root.getElementById("undo").addEventListener("click", () => this._run("undo_hide"));
     this._root.getElementById("manage").addEventListener("click", () => this._showHidden(0));
-    this._root.getElementById("archive").addEventListener("click", () => this._changeInLibrary("archive"));
+    const archive = this._root.getElementById("archive");
+    archive.addEventListener("pointerdown", () => { this._archivePressed = true; });
+    archive.addEventListener("click", (event) => this._archiveClicked(event));
+    // Holding Enter to reveal the controls repeats onto the focused Archive.
+    archive.addEventListener("keydown", (event) => { if (event.repeat && (event.key === "Enter" || event.key === " ")) event.preventDefault(); });
     this._root.getElementById("trash").addEventListener("click", () => this._changeInLibrary("trash"));
     this._root.getElementById("close").addEventListener("click", () => this._dialog.close());
   }
@@ -338,6 +342,10 @@ class PhotoControls {
 
   get busy() {
     return this._busy;
+  }
+
+  get failed() {
+    return this._style === "library" && Boolean(this._failure);
   }
 
   close() {
@@ -428,6 +436,7 @@ class PhotoControls {
   }
 
   _error(message = "") {
+    this._failure = message;
     for (const id of ["error", "dialog-error"]) {
       const element = this._root.getElementById(id);
       element.textContent = message;
@@ -515,7 +524,25 @@ class PhotoControls {
     content.appendChild(both);
   }
 
-  /** Archive or trash a displayed photo in Immich, always after a confirmation. */
+  /** The controls were aimed afresh or put away: forget a press on Archive
+   * that never became a click, and an error already shown. */
+  disarm() {
+    this._archivePressed = false;
+    if (this._failure) this._error();
+  }
+
+  /** The library look archives without asking, so the click must come from a
+   * press on the button: not from the long press that revealed it under the
+   * finger. A keyboard's click has no detail. */
+  _archiveClicked(event) {
+    const pressed = this._archivePressed || event.detail === 0;
+    this._archivePressed = false;
+    if (this._style === "library" && !pressed) return;
+    this._changeInLibrary("archive");
+  }
+
+  /** Archive or trash a displayed photo in Immich. The library look archives a
+   * known photo at once; trash, and the icons look, ask first. */
   _changeInLibrary(action) {
     const { orientation, entryId } = this._state;
     const photoIds = this._actionPhotoIds();
@@ -526,8 +553,14 @@ class PhotoControls {
       this._onLibraryAction?.("start", action, entryId);
       const success = await this._run(archive ? "archive_photo" : "trash_photo", { photo_ids: selected }, entryId);
       this._onLibraryAction?.(success ? "complete" : "failed", action, entryId);
+      return success;
     };
     const single = photoIds.length === 1;
+    if (archive && short && single) {
+      if (this._busy || !photoIds[0]) return;
+      // With no question to close, put the controls away here once it worked.
+      return run(photoIds)().then((success) => { if (success) this._onClose(); });
+    }
     const answer = archive ? "go" : "go trash";
     const content = this._open(
       archive ? (single ? "Archive this photo?" : "Archive which photo?")
@@ -651,7 +684,7 @@ class PhotoControlsReveal {
     this._listen(card, "pointermove", (event) => this._pointerMove(event));
     this._listen(card, "pointerup", () => {
       // A quick touch tap on the photo while the controls are up puts them
-      // away at once: the viewer changed their mind (ha-automations#737).
+      // away at once: the viewer changed their mind.
       const tap = this._visible && this._pressTimer !== null && this._pointer?.type !== "mouse";
       this._cancelPress();
       if (tap) this.hide();
@@ -749,7 +782,7 @@ class PhotoControlsReveal {
         this._armIdle();
       } else if (this._idleChecks >= 12) {
         this._release();
-      } else if (this._controls.active || this._pointer || this._keyboardFocused()) {
+      } else if (this._controls.active || this._controls.failed || this._pointer || this._keyboardFocused()) {
         this._armIdle();
       } else {
         this.hide();
@@ -1588,6 +1621,7 @@ function createAlbumSlideshowCardClass(Base) {
       ? pairHalfAt(stage.getBoundingClientRect(), point.x, point.y, this._photoOrientation, this._displayedPhotoIds?.length)
       : null;
     this._controlsTarget = target;
+    this._photoControls?.disarm?.();
     const ring = this.shadowRoot?.getElementById("target-ring");
     const dim = this.shadowRoot?.getElementById("target-dim");
     const controls = this.shadowRoot?.getElementById("photo-controls");
